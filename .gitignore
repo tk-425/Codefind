@@ -1,0 +1,21 @@
+# .doc
+.docs/
+
+# AI Agents
+.rulez/
+.claude/
+.agent/
+.codex/
+.gemini/
+.qwen/
+CLAUDE.md
+GEMINI.md
+QWEN.md
+AGENTS.md
+.mcp.json
+
+
+
+
+# vmem
+.vmem/
