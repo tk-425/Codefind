@@ -35,6 +35,7 @@ coverage.out
 # Go build output
 /bin
 /dist
+/codefind
 
 # Go dependency cache (vendor is optional)
 # vendor/
