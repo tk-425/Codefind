@@ -100,9 +100,13 @@ type QueryRequest struct {
 	Query      string            `json:"query"`               // Search query text
 	Collection string            `json:"collection"`          // ChromaDB collection to search
 	TopK       int               `json:"top_k"`               // Number of results
-	Filters    map[string]string `json:"filters,omitempty"`   // Metadata filters
+	Filters    map[string]string `json:"filters,omitempty"`   // Metadata filters (legacy)
 	Page       int               `json:"page,omitempty"`      // Pagination: page number (default 1)
 	PageSize   int               `json:"page_size,omitempty"` // Pagination: results per page
+	// New filter fields for Phase 2B
+	Languages   []string `json:"languages,omitempty"`    // Filter by language(s), e.g., ["python", "go"]
+	PathPrefix  string   `json:"path_prefix,omitempty"`  // Filter by file path prefix
+	ExcludePath string   `json:"exclude_path,omitempty"` // Exclude paths matching pattern
 }
 
 type QueryResult struct {

@@ -219,6 +219,45 @@ async def soft_delete_chunks(
         raise HTTPException(status_code=500, detail=f"Delete error: {e}")
 
 
+# --- Clear Collection Endpoint (Authenticated) ---
+
+
+@app.delete("/clear/{repo_id}")
+async def clear_collection(
+    repo_id: str,
+    x_auth_key: Optional[str] = Header(None),
+):
+    """Delete all chunks in a collection.
+
+    This completely removes the collection from ChromaDB.
+    Requires manager authentication.
+    """
+    # Validate auth
+    if not x_auth_key or not validate_auth_key(x_auth_key):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing auth key",
+        )
+
+    try:
+        chroma = ChromaDBService()
+        # Check if collection exists first
+        collection_names = [c.name for c in chroma.client.list_collections()]
+        if repo_id in collection_names:
+            # Delete the entire collection
+            chroma.client.delete_collection(repo_id)
+            return {"status": "deleted", "repo_id": repo_id}
+        else:
+            # Collection doesn't exist - treat as success (already cleared)
+            return {
+                "status": "not_found",
+                "repo_id": repo_id,
+                "message": "Collection already deleted or never existed",
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Clear error: {e}")
+
+
 # --- Query Endpoint (Public) ---
 
 
@@ -270,16 +309,31 @@ async def query(request: QueryRequest):
 
         # Step 4: Build metadata filters
         where_filter = None
+        filter_conditions = []
+
+        # Handle new languages field (Phase 2B)
+        if request.languages and len(request.languages) > 0:
+            if len(request.languages) == 1:
+                filter_conditions.append({"language": {"$eq": request.languages[0]}})
+            else:
+                filter_conditions.append({"language": {"$in": request.languages}})
+
+        # Handle legacy filters dict (backward compatibility)
         if request.filters:
-            # Convert filter dict to ChromaDB where syntax
-            # filters: {"language": "python", "file_path": "src/"}
-            where_filter = {}
             for key, value in request.filters.items():
-                # Use $contains for file_path to support prefix matching
                 if key == "file_path":
-                    where_filter[key] = {"$contains": value}
+                    filter_conditions.append({key: {"$contains": value}})
+                elif key == "language" and not request.languages:
+                    # Only use if languages not specified
+                    filter_conditions.append({key: {"$eq": value}})
                 else:
-                    where_filter[key] = {"$eq": value}
+                    filter_conditions.append({key: {"$eq": value}})
+
+        # Combine conditions with $and if multiple
+        if len(filter_conditions) == 1:
+            where_filter = filter_conditions[0]
+        elif len(filter_conditions) > 1:
+            where_filter = {"$and": filter_conditions}
 
         # Step 5: Query each collection
         all_results = []
@@ -316,9 +370,31 @@ async def query(request: QueryRequest):
                             "metadata": metadata,
                         }
                     )
-            except Exception as e:
-                # Collection might not exist, skip it
+            except Exception:
+                # Collection might not exist or have different embedding dimension, skip it
                 continue
+
+        # Step 5.5: Apply path filters (post-query since ChromaDB doesn't support prefix)
+        if request.path_prefix or request.exclude_path:
+            import re
+
+            filtered_results = []
+            for result in all_results:
+                file_path = result.get("metadata", {}).get("file_path", "")
+
+                # Check path prefix
+                if request.path_prefix and not file_path.startswith(
+                    request.path_prefix
+                ):
+                    continue
+
+                # Check exclusion pattern
+                if request.exclude_path:
+                    if re.search(request.exclude_path, file_path):
+                        continue
+
+                filtered_results.append(result)
+            all_results = filtered_results
 
         # Step 6: Sort by similarity (descending - highest first)
         all_results.sort(key=lambda x: x["similarity"], reverse=True)

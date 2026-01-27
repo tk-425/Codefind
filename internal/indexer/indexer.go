@@ -62,7 +62,7 @@ func (idx *Indexer) Index() error {
 	// Create or load manifest
 	fmt.Println("📋 Loading/creating repository manifest...")
 
-	repoID := generateRepoID(idx.options.RepoPath)
+	repoID := GenerateRepoID(idx.options.RepoPath)
 	manifest, err := idx.loadOrCreateManifest(repoID)
 	if err != nil {
 		return fmt.Errorf("failed to load/create manifest: %w", err)
@@ -342,13 +342,13 @@ func (idx *Indexer) fullIndex() error {
 
 	// Send chunks to server in batches with retry logic
 	fmt.Println("📤 Sending chunks to server...")
-	const batchSize = 8  // Reduced from 16 for faster embedding on CPU
+	const batchSize = 8 // Reduced from 16 for faster embedding on CPU
 	const maxRetries = 3
 	totalInserted := 0
 	totalBatches := (len(allChunks) + batchSize - 1) / batchSize
 
 	for i := 0; i < len(allChunks); i += batchSize {
-		end := min(i + batchSize, len(allChunks))
+		end := min(i+batchSize, len(allChunks))
 		batch := allChunks[i:end]
 		batchNum := (i / batchSize) + 1
 
@@ -430,7 +430,6 @@ func (idx *Indexer) fullIndex() error {
 
 	return nil
 }
-
 
 // loadOrCreateManifest loads existing manifest or creates new one
 func (idx *Indexer) loadOrCreateManifest(repoID string) (*config.RepositoryManifest, error) {
@@ -540,8 +539,8 @@ func isNetworkError(err error) bool {
 		strings.Contains(errStr, "dial tcp")
 }
 
-// generateRepoID creates a unique ID for a repository
-func generateRepoID(repoPath string) string {
+// GenerateRepoID creates a unique ID for a repository
+func GenerateRepoID(repoPath string) string {
 	// Hash the absolute path to guarantee uniqueness
 	// This ensures repos with same directory name in different locations get different IDs
 	absPath, err := filepath.Abs(repoPath)

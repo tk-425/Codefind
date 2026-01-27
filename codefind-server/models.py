@@ -74,6 +74,10 @@ class QueryRequest(BaseModel):
     filters: Optional[Dict[str, str]] = None
     page: Optional[int] = 1
     page_size: Optional[int] = 20
+    # New filter fields for Phase 2B
+    languages: Optional[List[str]] = None  # e.g., ["python", "go"]
+    path_prefix: Optional[str] = None  # e.g., "internal/"
+    exclude_path: Optional[str] = None  # e.g., "vendor|test"
 
 
 class QueryResult(BaseModel):
