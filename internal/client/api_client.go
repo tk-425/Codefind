@@ -104,6 +104,31 @@ func (ac *APIClient) Index(req api.IndexRequest) (*api.IndexResponse, error) {
 	return &indexResp, nil
 }
 
+// Query sends a search query to the server
+func (ac *APIClient) Query(req api.QueryRequest) (*api.QueryResponse, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	resp, err := ac.post("/query", data, false) // false = no auth required
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var queryResp api.QueryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if queryResp.Error != "" {
+		return &queryResp, fmt.Errorf("server error: %s", queryResp.Error)
+	}
+
+	return &queryResp, nil
+}
+
 // post sends a POST request
 func (ac *APIClient) post(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
 	url := ac.baseURL + endpoint

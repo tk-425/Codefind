@@ -68,7 +68,7 @@ class IndexResponse(BaseModel):
 # Query
 class QueryRequest(BaseModel):
     query: str
-    collection: str
+    collection: Optional[str] = None 
     top_k: int = 10
     filters: Optional[Dict[str, str]] = None
     page: Optional[int] = 1

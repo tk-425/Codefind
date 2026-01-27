@@ -1,15 +1,24 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/manifoldco/promptui"
 	"github.com/tk-425/Codefind/internal/chunker"
+	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/indexer"
+	"github.com/tk-425/Codefind/internal/query"
+	"github.com/tk-425/Codefind/pkg/api"
 )
 
 func main() {
@@ -30,7 +39,18 @@ func main() {
 		handleChunkFile()
 	case "index":
 		handleIndex()
-	case "help", "-h", "--help":
+	case "query":
+		handleQuery(os.Args[2:])
+	case "list":
+		handleList()
+	case "open":
+		if len(os.Args) < 3 {
+			fmt.Println("Error: result ID required")
+			fmt.Println("Usage: codefind open <id>")
+			os.Exit(1)
+		}
+		handleOpen(os.Args[2])
+	case "help", "-h", "--help", "":
 		printUsage()
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
@@ -272,6 +292,340 @@ func handleIndex() {
 	}
 }
 
+// savedResult stores query results for 'codefind open' command
+type savedResult struct {
+	ID        string `json:"id"`
+	RepoID    string `json:"repo_id"`
+	FilePath  string `json:"file_path"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+	Content   string `json:"content"`
+	Language  string `json:"language"`
+}
+
+// queryArgs holds parsed query arguments
+type queryArgs struct {
+	projectID  string
+	lang       string
+	pathPrefix string
+	topK       int
+	page       int
+	pageSize   int
+}
+
+func handleQuery(args []string) {
+	// Separate flags from positional arguments
+	// This allows: codefind query "search text" --lang=python
+	// OR: codefind query --lang=python "search text"
+	var queryText string
+	var flagArgs []string
+
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--") {
+			flagArgs = append(flagArgs, arg)
+		} else if queryText == "" {
+			queryText = arg
+		}
+	}
+
+	if queryText == "" {
+		fmt.Println("Error: query text required")
+		fmt.Println("\nUsage: codefind query <text> [options]")
+		fmt.Println("\nOptions:")
+		fmt.Println("  --project=<id>    Limit to specific project")
+		fmt.Println("  --lang=<lang>     Filter by language (python, go, typescript)")
+		fmt.Println("  --path=<prefix>   Filter by file path prefix")
+		fmt.Println("  --top-k=<n>       Number of results (default 10)")
+		fmt.Println("  --page=<n>        Page number for pagination (default 1)")
+		fmt.Println("  --page-size=<n>   Results per page (default 20)")
+		os.Exit(1)
+	}
+
+	// Load global config
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		fmt.Println("Run 'codefind init' first")
+		os.Exit(1)
+	}
+
+	// Parse flag arguments
+	qa := parseQueryArgs(flagArgs)
+
+	// Create API client and query client
+	apiClient := client.NewAPIClient(cfg.ServerURL)
+	qc := query.NewQueryClient(apiClient)
+
+	// Execute search
+	filters := buildFilters(qa)
+	resp, err := qc.Search(queryText, qa.topK, filters)
+	if err != nil {
+		fmt.Printf("Query failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	if resp.Error != "" {
+		fmt.Printf("Server error: %s\n", resp.Error)
+		os.Exit(1)
+	}
+
+	// Display results using package-level function
+	fmt.Println(query.FormatResults(resp))
+
+	// Save results for 'codefind open' command
+	if err := saveLastResults(resp); err != nil {
+		fmt.Printf("Warning: could not save results: %v\n", err)
+	}
+}
+
+// parseQueryArgs parses query command arguments
+func parseQueryArgs(args []string) queryArgs {
+	qa := queryArgs{
+		topK:     10,
+		page:     1,
+		pageSize: 20,
+	}
+
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--project=") {
+			qa.projectID = strings.TrimPrefix(arg, "--project=")
+		} else if strings.HasPrefix(arg, "--lang=") {
+			qa.lang = strings.TrimPrefix(arg, "--lang=")
+		} else if strings.HasPrefix(arg, "--path=") {
+			qa.pathPrefix = strings.TrimPrefix(arg, "--path=")
+		} else if strings.HasPrefix(arg, "--top-k=") {
+			fmt.Sscanf(arg, "--top-k=%d", &qa.topK)
+		} else if strings.HasPrefix(arg, "--page=") {
+			fmt.Sscanf(arg, "--page=%d", &qa.page)
+		} else if strings.HasPrefix(arg, "--page-size=") {
+			fmt.Sscanf(arg, "--page-size=%d", &qa.pageSize)
+		}
+	}
+
+	return qa
+}
+
+// buildFilters converts query args to API filters
+func buildFilters(qa queryArgs) map[string]string {
+	filters := make(map[string]string)
+
+	if qa.lang != "" {
+		filters["language"] = qa.lang
+	}
+	if qa.pathPrefix != "" {
+		filters["file_path"] = qa.pathPrefix
+	}
+
+	return filters
+}
+
+// saveLastResults saves results for 'codefind open' command
+func saveLastResults(resp *api.QueryResponse) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("could not get home directory: %w", err)
+	}
+
+	resultsDir := filepath.Join(home, ".codefind")
+	resultsFile := filepath.Join(resultsDir, "last-results.json")
+
+	// Ensure directory exists
+	if err := os.MkdirAll(resultsDir, 0755); err != nil {
+		return fmt.Errorf("could not create directory: %w", err)
+	}
+
+	results := make([]savedResult, len(resp.Results))
+	for i, r := range resp.Results {
+		results[i] = savedResult{
+			ID:        r.ChunkID,
+			RepoID:    r.Metadata.RepoID,
+			FilePath:  r.Metadata.FilePath,
+			StartLine: r.Metadata.StartLine,
+			EndLine:   r.Metadata.EndLine,
+			Content:   r.Content,
+			Language:  r.Metadata.Language,
+		}
+	}
+
+	data, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(resultsFile, data, 0644)
+}
+
+func handleOpen(resultID string) {
+	// Load last results
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("Error: could not get home directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	resultsFile := filepath.Join(home, ".codefind", "last-results.json")
+	data, err := os.ReadFile(resultsFile)
+	if err != nil {
+		fmt.Println("Error: no recent query results")
+		fmt.Println("Run 'codefind query' first")
+		os.Exit(1)
+	}
+
+	var results []savedResult
+	if err := json.Unmarshal(data, &results); err != nil {
+		fmt.Println("Error: could not parse results")
+		os.Exit(1)
+	}
+
+	// Find result by index or ID
+	var result *savedResult
+
+	// Try parsing as index (1-based)
+	if idx, err := strconv.Atoi(resultID); err == nil {
+		if idx > 0 && idx <= len(results) {
+			result = &results[idx-1]
+		}
+	}
+
+	// Try matching by ID if index didn't work
+	if result == nil {
+		for i := range results {
+			if strings.HasPrefix(results[i].ID, resultID) {
+				result = &results[i]
+				break
+			}
+		}
+	}
+
+	if result == nil {
+		fmt.Printf("Error: result not found\n")
+		os.Exit(1)
+	}
+
+	// Load config to get editor
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Println("Error: run 'codefind init' first")
+		os.Exit(1)
+	}
+
+	// Load manifest to get repo path
+	manifest, err := config.LoadManifest(result.RepoID)
+	if err != nil {
+		fmt.Printf("Error: could not load manifest for %s\n", result.RepoID)
+		os.Exit(1)
+	}
+
+	// Resolve full file path
+	fullPath := filepath.Join(manifest.RepoPath, result.FilePath)
+
+	// If repo path is relative, make it absolute
+	if !filepath.IsAbs(fullPath) {
+		absPath, err := filepath.Abs(fullPath)
+		if err == nil {
+			fullPath = absPath
+		}
+	}
+
+	// Verify file exists
+	if _, err := os.Stat(fullPath); err != nil {
+		fmt.Printf("Error: file not found: %s\n", fullPath)
+		os.Exit(1)
+	}
+
+	// Open in editor with line number
+	editor := cfg.Editor
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+		if editor == "" {
+			editor = "vim"
+		}
+	}
+
+	// Build editor-specific arguments
+	var cmdArgs []string
+	editorBase := filepath.Base(editor)
+
+	switch {
+	case strings.Contains(editorBase, "code"):
+		// VS Code: code --goto file:line
+		cmdArgs = []string{"--goto", fmt.Sprintf("%s:%d", fullPath, result.StartLine)}
+	case strings.Contains(editorBase, "subl"):
+		// Sublime Text: subl file:line
+		cmdArgs = []string{fmt.Sprintf("%s:%d", fullPath, result.StartLine)}
+	case strings.Contains(editorBase, "idea") || strings.Contains(editorBase, "goland"):
+		// JetBrains IDEs: idea --line N file
+		cmdArgs = []string{"--line", strconv.Itoa(result.StartLine), fullPath}
+	default:
+		// vim, nvim, nano, emacs, etc.: editor +line file
+		cmdArgs = []string{fmt.Sprintf("+%d", result.StartLine), fullPath}
+	}
+
+	cmd := exec.Command(editor, cmdArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Error: could not open editor: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func handleList() {
+	// Read all manifests from ~/.codefind/manifests/
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("Error: could not get home directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	manifestDir := filepath.Join(home, ".codefind", "manifests")
+
+	entries, err := os.ReadDir(manifestDir)
+	if err != nil {
+		fmt.Println("No projects indexed yet")
+		return
+	}
+
+	fmt.Println("Indexed Projects:")
+	fmt.Printf("%-40s %-12s %-8s %s\n", "PROJECT", "REPO ID", "CHUNKS", "INDEXED AT")
+	fmt.Println(strings.Repeat("-", 80))
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		repoID := strings.TrimSuffix(entry.Name(), ".json")
+		manifest, err := config.LoadManifest(repoID)
+		if err != nil {
+			continue
+		}
+
+		// Parse timestamp
+		indexedAt := "unknown"
+		if manifest.IndexedAt != "" {
+			t, err := time.Parse(time.RFC3339, manifest.IndexedAt)
+			if err == nil {
+				indexedAt = t.Format("2006-01-02")
+			}
+		}
+
+		// Safely truncate repo ID
+		displayRepoID := repoID
+		if len(displayRepoID) > 12 {
+			displayRepoID = displayRepoID[:12]
+		}
+
+		fmt.Printf("%-40s %-12s %-8d %s\n",
+			manifest.ProjectName,
+			displayRepoID,
+			manifest.ActiveChunkCount,
+			indexedAt)
+	}
+}
+
 // promptFor displays a prompt and reads user input
 // Returns the input or defaultValue if input is empty
 func promptFor(label string, defaultValue string) string {
@@ -294,29 +648,40 @@ Usage:
   codefind init [--server-url=<url>] [--editor=<editor>]
     Initialize configuration (sets up global config)
 
-  codefind list-files [repo-path]
-    Discover and list all indexable files in a repository
-    (defaults to current directory if path not provided)
-
-  codefind chunk-file <file-path>
-    Split a file into chunks using window-based strategy
-    Shows chunk boundaries, line numbers, and estimated tokens
-
   codefind index [repo-path]
     Index a repository: discover files, chunk, tokenize, and send to server
     (defaults to current directory if path not provided)
-    Requires: 'codefind init' must be run first
+
+  codefind query <text> [--options]
+    Search indexed code with semantic query
+    Options:
+      --project=<id>    Limit to specific project
+      --lang=<lang>     Filter by language
+      --path=<prefix>   Filter by file path
+      --top-k=<n>       Number of results (default 10)
+      --page=<n>        Page number (default 1)
+      --page-size=<n>   Results per page (default 20)
+
+  codefind list
+    Show all indexed projects
+
+  codefind open <id>
+    Open query result in editor at the correct line
+    id: Result number (1, 2, 3...) or UUID prefix
+
+  codefind list-files [repo-path]
+    Discover and list all indexable files in a repository
+
+  codefind chunk-file <file-path>
+    Split a file into chunks using window-based strategy
 
   codefind help, -h, --help
     Show this help message
 
 Examples:
-  codefind init
   codefind init --server-url=http://localhost:8080
-  codefind init --server-url=http://192.168.1.50:8080 --editor=code
-  codefind list-files /path/to/repo
-  codefind list-files
-  codefind chunk-file ./cmd/codefind/main.go
   codefind index
-  codefind index /path/to/repo`)
+  codefind query "authentication logic"
+  codefind query "error handling" --lang=python
+  codefind query "API" --project=my-api --top-k=20`)
 }

@@ -222,7 +222,9 @@ func (idx *Indexer) loadOrCreateManifest(repoID string) (*config.RepositoryManif
 	}
 
 	// Create new manifest
-	projectName := filepath.Base(idx.options.RepoPath)
+	// Use absolute path to get proper directory name (handles "." case)
+	absPath, _ := filepath.Abs(idx.options.RepoPath)
+	projectName := filepath.Base(absPath)
 	manifest = &config.RepositoryManifest{
 		RepoID:            repoID,
 		ProjectName:       projectName,
