@@ -94,6 +94,21 @@ type IndexResponse struct {
 	Error         string `json:"error,omitempty"`
 }
 
+// --- Chunk Status Update Endpoint (Tombstone Mode) ---
+
+type ChunkStatusRequest struct {
+	AuthKey         string   `json:"auth_key"`
+	Collection      string   `json:"collection"`
+	FilePaths       []string `json:"file_paths"`         // Files whose chunks should be marked
+	Status          string   `json:"status"`             // "active" or "deleted"
+	DeletedInCommit string   `json:"deleted_in_commit,omitempty"`
+}
+
+type ChunkStatusResponse struct {
+	UpdatedCount int    `json:"updated_count"`
+	Error        string `json:"error,omitempty"`
+}
+
 // --- Query Endpoint ---
 
 type QueryRequest struct {

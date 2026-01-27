@@ -14,6 +14,8 @@ from models import (
     EmbedResponse,
     IndexRequest,
     IndexResponse,
+    ChunkStatusRequest,
+    ChunkStatusResponse,
     QueryRequest,
     QueryResponse,
     QueryResult,
@@ -258,6 +260,76 @@ async def clear_collection(
         raise HTTPException(status_code=500, detail=f"Clear error: {e}")
 
 
+# --- Chunk Status Update Endpoint (Protected) ---
+
+
+@app.patch("/chunks/status")
+async def update_chunk_status(
+    request: ChunkStatusRequest,
+    x_auth_key: Optional[str] = Header(None),
+):
+    """Mark chunks as deleted or active.
+
+    This soft-deletes chunks by updating their status metadata.
+    Used for tombstone mode - retains code history for querying.
+    """
+    # Validate auth (use header or request body)
+    auth_key = x_auth_key or request.auth_key
+    if not auth_key or not validate_auth_key(auth_key):
+        raise HTTPException(status_code=401, detail="Invalid or missing auth key")
+
+    try:
+        chroma = ChromaDBService()
+        collection = chroma.client.get_collection(name=request.collection)
+
+        # Get all chunks for the specified file paths
+        # ChromaDB doesn't support direct metadata updates, so we need to:
+        # 1. Query for chunks matching the file paths
+        # 2. Delete them
+        # 3. Re-add with updated metadata
+
+        updated_count = 0
+        now = datetime.utcnow()
+
+        for file_path in request.file_paths:
+            # Query for chunks from this file
+            results = collection.get(
+                where={"file_path": {"$eq": file_path}},
+                include=["documents", "metadatas", "embeddings"],
+            )
+
+            if not results["ids"]:
+                continue
+
+            # Update metadata for each chunk
+            for i, chunk_id in enumerate(results["ids"]):
+                metadata = results["metadatas"][i]
+                metadata["status"] = request.status
+                if request.status == "deleted":
+                    metadata["deleted_at"] = now.isoformat()
+                    if request.deleted_in_commit:
+                        metadata["deleted_in_commit"] = request.deleted_in_commit
+                else:
+                    # Restoring - clear deletion fields
+                    metadata.pop("deleted_at", None)
+                    metadata.pop("deleted_in_commit", None)
+
+            # Delete and re-add with updated metadata
+            collection.delete(ids=results["ids"])
+            collection.add(
+                ids=results["ids"],
+                documents=results["documents"],
+                metadatas=results["metadatas"],
+                embeddings=results["embeddings"],
+            )
+            updated_count += len(results["ids"])
+
+        return ChunkStatusResponse(updated_count=updated_count)
+
+    except Exception as e:
+        return ChunkStatusResponse(updated_count=0, error=str(e))
+
+
 # --- Query Endpoint (Public) ---
 
 
@@ -317,6 +389,10 @@ async def query(request: QueryRequest):
                 filter_conditions.append({"language": {"$eq": request.languages[0]}})
             else:
                 filter_conditions.append({"language": {"$in": request.languages}})
+
+        # Phase 2C: Exclude deleted chunks by default
+        # Only show active chunks unless explicitly requested otherwise
+        filter_conditions.append({"status": {"$eq": "active"}})
 
         # Handle legacy filters dict (backward compatibility)
         if request.filters:

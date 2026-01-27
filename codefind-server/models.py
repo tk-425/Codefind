@@ -66,6 +66,20 @@ class IndexResponse(BaseModel):
     error: Optional[str] = None
 
 
+# Chunk Status Update (for tombstone mode)
+class ChunkStatusRequest(BaseModel):
+    auth_key: str
+    collection: str
+    file_paths: List[str]  # Files whose chunks should be marked deleted
+    status: str = "deleted"  # "active" or "deleted"
+    deleted_in_commit: Optional[str] = None
+
+
+class ChunkStatusResponse(BaseModel):
+    updated_count: int
+    error: Optional[str] = None
+
+
 # Query
 class QueryRequest(BaseModel):
     query: str

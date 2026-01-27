@@ -129,11 +129,65 @@ func (ac *APIClient) Query(req api.QueryRequest) (*api.QueryResponse, error) {
 	return &queryResp, nil
 }
 
+// UpdateChunkStatus marks chunks as deleted or active (tombstone mode)
+func (ac *APIClient) UpdateChunkStatus(req api.ChunkStatusRequest) (*api.ChunkStatusResponse, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	resp, err := ac.patch("/chunks/status", data, true) // true = requires auth
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var statusResp api.ChunkStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if statusResp.Error != "" {
+		return &statusResp, fmt.Errorf("server error: %s", statusResp.Error)
+	}
+
+	return &statusResp, nil
+}
+
 // post sends a POST request
 func (ac *APIClient) post(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
 	url := ac.baseURL + endpoint
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	if requireAuth && ac.authKey != "" {
+		req.Header.Set("X-Auth-Key", ac.authKey)
+	}
+
+	resp, err := ac.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	return resp, nil
+}
+
+// patch sends a PATCH request
+func (ac *APIClient) patch(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
+	url := ac.baseURL + endpoint
+
+	req, err := http.NewRequest("PATCH", url, bytes.NewBuffer(data))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

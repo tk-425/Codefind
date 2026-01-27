@@ -137,15 +137,42 @@ func (idx *Indexer) incrementalIndex(changes *ChangeDetectionResult) error {
 }
 
 // markChunksDeleted marks chunks as deleted without removing from ChromaDB
-// This preserves history and allows recovery
+// This preserves history and allows recovery (tombstone mode)
 func (idx *Indexer) markChunksDeleted(filePaths []string) error {
-	for _, path := range filePaths {
-		// Update local manifest
-		delete(idx.manifest.IndexedFiles, path)
-		idx.manifest.DeletedChunkCount++
+	if len(filePaths) == 0 {
+		return nil
 	}
-	// Note: Server-side soft delete can be implemented via /chunks/delete endpoint
-	// For now, we just update the local manifest
+
+	// Get current commit for tracking deletion context
+	commit := ""
+	if IsGitRepository(idx.options.RepoPath) {
+		commit, _ = getHeadCommit(idx.options.RepoPath)
+	}
+
+	// Call server to mark chunks as deleted
+	req := api.ChunkStatusRequest{
+		AuthKey:         idx.options.AuthKey,
+		Collection:      idx.manifest.RepoID,
+		FilePaths:       filePaths,
+		Status:          "deleted",
+		DeletedInCommit: commit,
+	}
+
+	resp, err := idx.client.UpdateChunkStatus(req)
+	if err != nil {
+		return fmt.Errorf("failed to mark chunks as deleted: %w", err)
+	}
+
+	// Update local manifest
+	for _, path := range filePaths {
+		delete(idx.manifest.IndexedFiles, path)
+	}
+	idx.manifest.DeletedChunkCount += resp.UpdatedCount
+
+	if resp.UpdatedCount > 0 {
+		fmt.Printf("🗑️  Marked %d chunks as deleted from %d files\n", resp.UpdatedCount, len(filePaths))
+	}
+
 	return nil
 }
 
