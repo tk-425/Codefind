@@ -8,13 +8,24 @@ from transformers import AutoTokenizer
 from dotenv import load_dotenv
 
 from models import (
-    TokenizeRequest, TokenizeResponse,
-    EmbedRequest, EmbedResponse,
-    IndexRequest, IndexResponse,
-    QueryRequest, QueryResponse,
-    HealthResponse
+    TokenizeRequest,
+    TokenizeResponse,
+    EmbedRequest,
+    EmbedResponse,
+    IndexRequest,
+    IndexResponse,
+    QueryRequest,
+    QueryResponse,
+    QueryResult,
+    HealthResponse,
 )
-from auth import validate_auth_key, create_first_manager, add_manager, remove_manager, list_managers
+from auth import (
+    validate_auth_key,
+    create_first_manager,
+    add_manager,
+    remove_manager,
+    list_managers,
+)
 from services.chromadb_service import ChromaDBService
 from services.ollama_service import OllamaService
 
@@ -33,6 +44,7 @@ if not CHROMADB_URL:
     raise ValueError("CHROMADB_URL environment variable not set. Check .env file.")
 
 # --- Health Endpoint ---
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -60,17 +72,21 @@ async def health_check():
         ollama_status="ok" if ollama_ok else "error",
         chromadb_status="ok" if chromadb_ok else "error",
         timestamp=datetime.now(timezone.utc),
-        error=error_msg
+        error=error_msg,
     )
 
+
 # --- Tokenize Endpoint ---
+
 
 @app.post("/tokenize", response_model=TokenizeResponse)
 async def tokenize(request: TokenizeRequest):
     """Count tokens using transformers library."""
     try:
         # Load tokenizer for the model (defaults to BERT tokenizer for embedding models)
-        tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(
+            "bert-base-uncased", trust_remote_code=True
+        )
 
         token_counts = []
         for text in request.input:
@@ -82,7 +98,9 @@ async def tokenize(request: TokenizeRequest):
     except Exception as e:
         return TokenizeResponse(tokens=[], error=str(e))
 
+
 # --- Embed Endpoint ---
+
 
 @app.post("/embed", response_model=EmbedResponse)
 async def embed(request: EmbedRequest):
@@ -95,7 +113,9 @@ async def embed(request: EmbedRequest):
     except Exception as e:
         return EmbedResponse(embeddings=[], error=str(e))
 
+
 # --- Index Endpoint (Protected) ---
+
 
 @app.post("/index", response_model=IndexResponse)
 async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header(None)):
@@ -119,8 +139,7 @@ async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header
 
         # Get embeddings from Ollama
         embeddings = ollama.embed(
-            model=request.chunks[0].metadata.model_id,
-            texts=texts
+            model=request.chunks[0].metadata.model_id, texts=texts
         )
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Ollama error: {e}")
@@ -137,51 +156,163 @@ async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header
             documents.append(chunk.content)
 
             # Convert metadata to dict with JSON serialization (datetime -> ISO string, exclude None values)
-            metadata_dict = chunk.metadata.model_dump(mode='json', exclude_none=True)
+            metadata_dict = chunk.metadata.model_dump(mode="json", exclude_none=True)
             metadatas.append(metadata_dict)
 
         # Add to collection
         collection.add(
-            ids=ids,
-            documents=documents,
-            embeddings=embeddings,
-            metadatas=metadatas
+            ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas
         )
 
-        return IndexResponse(
-            inserted_count=len(ids),
-            updated_count=0,
-            error=""
-        )
+        return IndexResponse(inserted_count=len(ids), updated_count=0, error="")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Storage error: {e}")
 
+
 # --- Query Endpoint (Public) ---
+
 
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
-    """Search indexed chunks (public endpoint)."""
+    """Search indexed chunks across one or more collections.
+
+    Public endpoint - no authentication required.
+    """
     try:
-        # TODO: Implement ChromaDB query logic
-        # For now, return mock results
+        # Step 1: Validate request
+        top_k = request.top_k or 10
+        page = request.page or 1
+        page_size = request.page_size or 20
+
+        if page < 1 or page_size < 1:
+            raise ValueError("page and page_size must be >= 1")
+        if top_k < 1 or top_k > 1000:
+            raise ValueError("top_k must be between 1 and 1000")
+
+        # Step 2: Embed the query
+        try:
+            ollama = OllamaService()
+            query_embeddings = ollama.embed(
+                model="unclemusclez/jina-embeddings-v2-base-code", texts=[request.query]
+            )
+            query_embedding = query_embeddings[0]
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Embedding error: {e}")
+
+        # Step 3: Determine which collections to query
+        chroma = ChromaDBService()
+
+        if request.collection:
+            # Query specific collection
+            collections_to_query = [request.collection]
+        else:
+            # Query all collections (multi-project)
+            try:
+                collections_to_query = chroma.list_collections()
+            except Exception as e:
+                return QueryResponse(
+                    results=[],
+                    total_count=0,
+                    page=page,
+                    page_size=page_size,
+                    error=f"Failed to list collections: {e}",
+                )
+
+        # Step 4: Build metadata filters
+        where_filter = None
+        if request.filters:
+            # Convert filter dict to ChromaDB where syntax
+            # filters: {"language": "python", "file_path": "src/"}
+            where_filter = {}
+            for key, value in request.filters.items():
+                # Use $contains for file_path to support prefix matching
+                if key == "file_path":
+                    where_filter[key] = {"$contains": value}
+                else:
+                    where_filter[key] = {"$eq": value}
+
+        # Step 5: Query each collection
+        all_results = []
+
+        for collection_name in collections_to_query:
+            try:
+                results = chroma.query(
+                    collection_name=collection_name,
+                    query_embedding=query_embedding,
+                    top_k=top_k,
+                    where=where_filter,
+                )
+
+                # Convert results to QueryResult format
+                for i, (chunk_id, distance, content, metadata) in enumerate(
+                    zip(
+                        results["ids"],
+                        results["distances"],
+                        results["documents"],
+                        results["metadatas"],
+                    )
+                ):
+                    # Convert L2 distance to similarity score (0-1 range)
+                    # L2 distance is unbounded [0, inf), so we use: 1 / (1 + distance)
+                    # This maps: distance=0 → similarity=1, distance=inf → similarity=0
+                    similarity = 1.0 / (1.0 + distance)
+
+                    all_results.append(
+                        {
+                            "id": chunk_id,
+                            "content": content,
+                            "similarity": similarity,
+                            "distance": distance,
+                            "metadata": metadata,
+                        }
+                    )
+            except Exception as e:
+                # Collection might not exist, skip it
+                continue
+
+        # Step 6: Sort by similarity (descending - highest first)
+        all_results.sort(key=lambda x: x["similarity"], reverse=True)
+
+        # Step 6.5: Limit to top_k results (important for multi-collection efficiency)
+        # This prevents returning hundreds of results when querying many collections
+        all_results = all_results[:top_k]
+
+        # Step 7: Apply pagination
+        total_count = len(all_results)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_results = all_results[start_idx:end_idx]
+
+        # Step 8: Convert to response format
+        response_results = [
+            QueryResult(
+                chunk_id=r["id"],
+                content=r["content"],
+                similarity=r["similarity"],
+                metadata=r["metadata"],
+                distance=r["distance"],
+            )
+            for r in paginated_results
+        ]
 
         return QueryResponse(
-            results=[],
-            total_count=0,
-            page=request.page or 1,
-            page_size=request.page_size or 20
+            results=response_results,
+            total_count=total_count,
+            page=page,
+            page_size=page_size,
+            error="",
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         return QueryResponse(
-            results=[],
-            total_count=0,
-            page=request.page or 1,
-            page_size=request.page_size or 20,
-            error=str(e)
+            results=[], total_count=0, page=page, page_size=page_size, error=str(e)
         )
 
+
 # --- Admin Endpoints (Protected) ---
+
 
 @app.post("/admin/bootstrap")
 async def bootstrap(email: str, auth_key: str):
@@ -189,9 +320,12 @@ async def bootstrap(email: str, auth_key: str):
     success = create_first_manager(email, auth_key)
 
     if not success:
-        raise HTTPException(status_code=400, detail="Bootstrap failed - managers already exist")
+        raise HTTPException(
+            status_code=400, detail="Bootstrap failed - managers already exist"
+        )
 
     return {"status": "ok", "message": f"First manager {email} created"}
+
 
 @app.post("/admin/add")
 async def add_admin(email: str, x_auth_key: Optional[str] = Header(None)):
@@ -208,6 +342,7 @@ async def add_admin(email: str, x_auth_key: Optional[str] = Header(None)):
 
     return {"status": "ok", "message": f"Manager {email} added"}
 
+
 @app.get("/admin/list")
 async def list_admins(x_auth_key: Optional[str] = Header(None)):
     """List all managers (requires auth)."""
@@ -217,6 +352,7 @@ async def list_admins(x_auth_key: Optional[str] = Header(None)):
 
     managers = list_managers()
     return {"managers": managers}
+
 
 @app.delete("/admin/{email}")
 async def remove_admin(email: str, x_auth_key: Optional[str] = Header(None)):
@@ -232,8 +368,10 @@ async def remove_admin(email: str, x_auth_key: Optional[str] = Header(None)):
 
     return {"status": "ok", "message": f"Manager {email} removed"}
 
+
 # --- Server startup ---
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8080)
