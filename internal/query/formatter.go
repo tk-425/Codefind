@@ -5,17 +5,38 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/tk-425/Codefind/pkg/api"
 )
 
-// FormatResults formats query results for display
+// Color definitions for consistent styling
+var (
+	indexColor    = color.New(color.FgCyan, color.Bold)
+	fileColor     = color.New(color.FgWhite)
+	similarityColor = color.New(color.FgYellow)
+	repoColor     = color.New(color.FgHiBlack)
+	langColor     = color.New(color.FgMagenta)
+	contentColor  = color.New(color.FgHiBlack)
+	timestampColor = color.New(color.FgHiBlack, color.Italic)
+	headerColor   = color.New(color.FgGreen, color.Bold)
+	errorColor    = color.New(color.FgRed)
+)
+
+// FormatResults formats query results for display with colors
 func FormatResults(resp *api.QueryResponse) string {
 	if len(resp.Results) == 0 {
 		return "No results found"
 	}
 
 	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Found %d results (page %d/%d, %d per page)\n\n", resp.TotalCount, resp.Page, (resp.TotalCount+resp.PageSize-1)/resp.PageSize, resp.PageSize))
+	
+	// Header with result count and pagination
+	header := fmt.Sprintf("Found %d results (page %d/%d, %d per page)\n\n",
+		resp.TotalCount,
+		resp.Page,
+		(resp.TotalCount+resp.PageSize-1)/resp.PageSize,
+		resp.PageSize)
+	output.WriteString(headerColor.Sprint(header))
 
 	for i, result := range resp.Results {
 		idx := (resp.Page-1)*resp.PageSize + i + 1
@@ -26,41 +47,77 @@ func FormatResults(resp *api.QueryResponse) string {
 	return output.String()
 }
 
-// formatResult formats a single result
+// formatResult formats a single result with colors
 func formatResult(index int, result api.QueryResult) string {
 	var sb strings.Builder
 
-	// Header with index, file, and similarity
+	// Line 1: [index] file:lines (similarity: X%)
 	similarity := int(result.Distance * 100)
-	sb.WriteString(fmt.Sprintf("[%d] %s:%d-%d (similarity: %d%%)\n", index,
+	sb.WriteString(indexColor.Sprintf("[%d] ", index))
+	sb.WriteString(fileColor.Sprintf("%s:%d-%d ",
 		result.Metadata.FilePath,
 		result.Metadata.StartLine,
-		result.Metadata.EndLine,
-		similarity))
+		result.Metadata.EndLine))
+	sb.WriteString(similarityColor.Sprintf("(similarity: %d%%)\n", similarity))
 
-	// Metadata line (includes project info for multi-project support)
+	// Line 2: [repo_id] project_name | language
 	meta := result.Metadata
-	sb.WriteString(fmt.Sprintf("    [%s] %s | %s\n",
-		meta.RepoID[:8],
-		meta.ProjectName,
-		meta.Language))
-
-	// Content preview (truncated)
-	contentPreview := strings.TrimSpace(result.Content)
-	if len(contentPreview) > 200 {
-		contentPreview = contentPreview[:200] + "..."
+	repoIDShort := meta.RepoID
+	if len(repoIDShort) > 8 {
+		repoIDShort = repoIDShort[:8]
 	}
-	contentPreview = strings.ReplaceAll(contentPreview, "\n", "\n    ")
-	sb.WriteString(fmt.Sprintf("    %s\n", contentPreview))
+	sb.WriteString("    ")
+	sb.WriteString(repoColor.Sprintf("[%s] ", repoIDShort))
+	sb.WriteString(fmt.Sprintf("%s | ", meta.ProjectName))
+	sb.WriteString(langColor.Sprintf("%s\n", meta.Language))
 
-	// Metadata timestamp
-	sb.WriteString(fmt.Sprintf("    indexed: %s\n",
-		formatTime(meta.IndexedAt)))
+	// Lines 3+: Content preview (first 4 lines)
+	preview := getContentPreview(result.Content, 4)
+	for _, line := range preview {
+		sb.WriteString("    ")
+		sb.WriteString(contentColor.Sprint(line))
+		sb.WriteString("\n")
+	}
+
+	// Last line: indexed timestamp
+	sb.WriteString("    ")
+	sb.WriteString(timestampColor.Sprintf("indexed: %s\n", formatTime(meta.IndexedAt)))
 
 	return sb.String()
 }
 
-// formatTime formats a timestamp for display
+// getContentPreview returns the first N lines of content
+func getContentPreview(content string, maxLines int) []string {
+	lines := strings.Split(content, "\n")
+	
+	// Trim empty lines from start
+	startIdx := 0
+	for startIdx < len(lines) && strings.TrimSpace(lines[startIdx]) == "" {
+		startIdx++
+	}
+	
+	if startIdx >= len(lines) {
+		return []string{"(empty)"}
+	}
+	
+	lines = lines[startIdx:]
+	
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines = append(lines, "...")
+	}
+	
+	// Truncate long lines
+	for i, line := range lines {
+		if len(line) > 100 {
+			lines[i] = line[:100] + "..."
+		}
+	}
+	
+	return lines
+}
+
+// formatTime formats a timestamp as relative time
 func formatTime(t time.Time) string {
 	now := time.Now()
 	diff := now.Sub(t)
@@ -81,9 +138,16 @@ func formatTime(t time.Time) string {
 	return t.Format("2006-01-02")
 }
 
-// FormatResultsJSON formats as JSON (for scripting)
-func FormatResultsJSON(resp *api.QueryResponse) string {
-	// User can pipe output to jq if they want structured format
-	// For now, keep human-readable default
-	return FormatResults(resp)
+// FormatResultsPlain formats results without colors (for piping/scripting)
+func FormatResultsPlain(resp *api.QueryResponse) string {
+	// Disable colors temporarily
+	color.NoColor = true
+	result := FormatResults(resp)
+	color.NoColor = false
+	return result
+}
+
+// FormatError formats an error message with color
+func FormatError(msg string) string {
+	return errorColor.Sprint(msg)
 }

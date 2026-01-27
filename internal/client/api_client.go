@@ -180,3 +180,40 @@ func (ac *APIClient) get(endpoint string) (*http.Response, error) {
 
 	return resp, nil
 }
+
+// delete sends a DELETE request
+func (ac *APIClient) delete(endpoint string) (*http.Response, error) {
+	url := ac.baseURL + endpoint
+
+	req, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if ac.authKey != "" {
+		req.Header.Set("X-Auth-Key", ac.authKey)
+	}
+
+	resp, err := ac.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	return resp, nil
+}
+
+// ClearCollection deletes all chunks in a collection
+func (ac *APIClient) ClearCollection(repoID string) error {
+	resp, err := ac.delete("/clear/" + repoID)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}

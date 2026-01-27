@@ -50,6 +50,12 @@ func main() {
 			os.Exit(1)
 		}
 		handleOpen(os.Args[2])
+	case "clear":
+		repoPath := "."
+		if len(os.Args) >= 3 {
+			repoPath = os.Args[2]
+		}
+		handleClear(repoPath)
 	case "help", "-h", "--help", "":
 		printUsage()
 	default:
@@ -305,12 +311,13 @@ type savedResult struct {
 
 // queryArgs holds parsed query arguments
 type queryArgs struct {
-	projectID  string
-	lang       string
-	pathPrefix string
-	topK       int
-	page       int
-	pageSize   int
+	projectID   string
+	lang        string
+	pathPrefix  string
+	excludePath string
+	topK        int
+	page        int
+	pageSize    int
 }
 
 func handleQuery(args []string) {
@@ -335,6 +342,7 @@ func handleQuery(args []string) {
 		fmt.Println("  --project=<id>    Limit to specific project")
 		fmt.Println("  --lang=<lang>     Filter by language (python, go, typescript)")
 		fmt.Println("  --path=<prefix>   Filter by file path prefix")
+		fmt.Println("  --exclude=<pat>   Exclude paths matching regex pattern")
 		fmt.Println("  --top-k=<n>       Number of results (default 10)")
 		fmt.Println("  --page=<n>        Page number for pagination (default 1)")
 		fmt.Println("  --page-size=<n>   Results per page (default 20)")
@@ -356,9 +364,14 @@ func handleQuery(args []string) {
 	apiClient := client.NewAPIClient(cfg.ServerURL)
 	qc := query.NewQueryClient(apiClient)
 
-	// Execute search
-	filters := buildFilters(qa)
-	resp, err := qc.Search(queryText, qa.topK, filters)
+	// Parse languages from comma-separated string
+	var languages []string
+	if qa.lang != "" {
+		languages = strings.Split(qa.lang, ",")
+	}
+
+	// Execute search with new filter fields
+	resp, err := qc.Search(queryText, qa.topK, languages, qa.pathPrefix, qa.excludePath)
 	if err != nil {
 		fmt.Printf("Query failed: %v\n", err)
 		os.Exit(1)
@@ -399,25 +412,14 @@ func parseQueryArgs(args []string) queryArgs {
 			fmt.Sscanf(arg, "--page=%d", &qa.page)
 		} else if strings.HasPrefix(arg, "--page-size=") {
 			fmt.Sscanf(arg, "--page-size=%d", &qa.pageSize)
+		} else if strings.HasPrefix(arg, "--exclude=") {
+			qa.excludePath = strings.TrimPrefix(arg, "--exclude=")
 		}
 	}
 
 	return qa
 }
 
-// buildFilters converts query args to API filters
-func buildFilters(qa queryArgs) map[string]string {
-	filters := make(map[string]string)
-
-	if qa.lang != "" {
-		filters["language"] = qa.lang
-	}
-	if qa.pathPrefix != "" {
-		filters["file_path"] = qa.pathPrefix
-	}
-
-	return filters
-}
 
 // saveLastResults saves results for 'codefind open' command
 func saveLastResults(resp *api.QueryResponse) error {
@@ -626,6 +628,62 @@ func handleList() {
 	}
 }
 
+// handleClear clears all chunks from a repository's collection
+func handleClear(repoPath string) {
+	// Get absolute path
+	absPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		fmt.Printf("Error: failed to resolve path: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Load global config for server URL and auth
+	globalCfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Printf("Error: codefind not initialized. Run 'codefind init' first.\n")
+		os.Exit(1)
+	}
+
+	// Load manifest to get repo_id
+	repoID := indexer.GenerateRepoID(absPath)
+	manifest, err := config.LoadManifest(repoID)
+	if err != nil {
+		fmt.Printf("Error: no manifest found for %s. Has this repo been indexed?\n", absPath)
+		os.Exit(1)
+	}
+
+	// Confirm with user
+	fmt.Printf("⚠️  This will delete ALL indexed chunks for project '%s'\n", manifest.ProjectName)
+	fmt.Printf("   Repo ID: %s\n", manifest.RepoID)
+	fmt.Print("   Continue? [y/N]: ")
+
+	var response string
+	fmt.Scanln(&response)
+	if response != "y" && response != "Y" {
+		fmt.Println("Cancelled.")
+		return
+	}
+
+	// Call server to delete collection
+	apiClient := client.NewAPIClient(globalCfg.ServerURL)
+	apiClient.SetAuthKey("secret-key-123") // TODO: Load from config in Phase 3A
+
+	err = apiClient.ClearCollection(manifest.RepoID)
+	if err != nil {
+		fmt.Printf("Error: failed to clear collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Delete local manifest
+	manifestPath, _ := config.ManifestPath(repoID)
+	if err := os.Remove(manifestPath); err != nil && !os.IsNotExist(err) {
+		fmt.Printf("Warning: failed to delete manifest: %v\n", err)
+	}
+
+	fmt.Printf("✅ Cleared all chunks for '%s'\n", manifest.ProjectName)
+	fmt.Println("   Run 'codefind index' to re-index from scratch.")
+}
+
 // promptFor displays a prompt and reads user input
 // Returns the input or defaultValue if input is empty
 func promptFor(label string, defaultValue string) string {
@@ -674,6 +732,10 @@ Usage:
 
   codefind chunk-file <file-path>
     Split a file into chunks using window-based strategy
+
+  codefind clear [repo-path]
+    Delete all indexed chunks for a repository
+    (defaults to current directory if path not provided)
 
   codefind help, -h, --help
     Show this help message
