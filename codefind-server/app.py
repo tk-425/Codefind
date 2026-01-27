@@ -169,6 +169,55 @@ async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header
         raise HTTPException(status_code=500, detail=f"Storage error: {e}")
 
 
+# --- Soft Delete Endpoint (Authenticated) ---
+
+
+@app.post("/chunks/delete")
+async def soft_delete_chunks(
+    repo_id: str,
+    file_paths: list[str],
+    x_auth_key: Optional[str] = Header(None),
+):
+    """Mark chunks as deleted without removing from ChromaDB.
+
+    This preserves history and allows recovery.
+    Requires manager authentication.
+    """
+    # Validate auth
+    if not x_auth_key or not validate_auth_key(x_auth_key):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing auth key",
+        )
+
+    try:
+        chroma = ChromaDBService()
+        collection = chroma.get_or_create_collection(repo_id)
+
+        deleted_count = 0
+        for path in file_paths:
+            # Get chunks matching this file path
+            results = collection.get(where={"file_path": path})
+
+            if results and results["ids"]:
+                for chunk_id in results["ids"]:
+                    # Update metadata to mark as deleted
+                    collection.update(
+                        ids=[chunk_id],
+                        metadatas=[
+                            {
+                                "status": "deleted",
+                                "deleted_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                        ],
+                    )
+                    deleted_count += 1
+
+        return {"deleted_count": deleted_count, "file_paths": file_paths}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Delete error: {e}")
+
+
 # --- Query Endpoint (Public) ---
 
 

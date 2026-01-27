@@ -2,8 +2,13 @@ package indexer
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/tk-425/Codefind/internal/config"
 )
 
 // FileChange represents a changed file with its status
@@ -132,4 +137,78 @@ func getHeadCommit(repoPath string) (string, error) {
 		return "", fmt.Errorf("git rev-parse failed: %w", err)
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+// DetectMtimeChanges finds changed files by comparing mtime
+// Used for non-git repositories as a fallback detection method
+func DetectMtimeChanges(repoPath string, manifest *config.RepositoryManifest) (*ChangeDetectionResult, error) {
+	result := &ChangeDetectionResult{
+		Added:     []string{},
+		Modified:  []string{},
+		Deleted:   []string{},
+		Renamed:   make(map[string]string),
+		IsGitRepo: false,
+	}
+
+	// Get absolute path
+	absPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Get current files in the repo
+	discovery, err := DiscoverFiles(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover files: %w", err)
+	}
+
+	// Track current files for deletion detection
+	currentFiles := make(map[string]bool)
+
+	for _, file := range discovery.Files {
+		currentFiles[file.Path] = true
+
+		// Check if file existed in previous index
+		existingInfo, exists := manifest.IndexedFiles[file.Path]
+		if !exists {
+			// New file
+			result.Added = append(result.Added, file.Path)
+			continue
+		}
+
+		// Get current file mtime
+		fullPath := filepath.Join(absPath, file.Path)
+		stat, err := os.Stat(fullPath)
+		if err != nil {
+			// File unreadable, skip
+			continue
+		}
+		currentMtime := stat.ModTime().Format(time.RFC3339)
+
+		// Compare mtime with stored value
+		if currentMtime != existingInfo.LastModTime {
+			result.Modified = append(result.Modified, file.Path)
+		}
+	}
+
+	// Find deleted files (were in manifest but not in current files)
+	for filePath := range manifest.IndexedFiles {
+		if !currentFiles[filePath] {
+			result.Deleted = append(result.Deleted, filePath)
+		}
+	}
+
+	return result, nil
+}
+
+// DetectChanges returns changes using git (if available) or mtime fallback
+// This is the unified entry point for change detection
+func DetectChanges(repoPath string, manifest *config.RepositoryManifest) (*ChangeDetectionResult, error) {
+	// Use git-based detection if repo is a git repo and has a previous commit
+	if IsGitRepository(repoPath) && manifest.LastIndexedCommit != "" {
+		return DetectGitChanges(repoPath, manifest.LastIndexedCommit)
+	}
+
+	// Fall back to mtime-based detection for non-git repos or first-time indexing
+	return DetectMtimeChanges(repoPath, manifest)
 }
