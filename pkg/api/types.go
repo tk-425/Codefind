@@ -51,6 +51,7 @@ type ChunkMetadata struct {
 
 // Chunk represents a code chunk with content and metadata
 type Chunk struct {
+	ID       string        `json:"id,omitempty"` // Stable chunk ID (SHA256-based)
 	Content  string        `json:"content"`
 	Metadata ChunkMetadata `json:"metadata"`
 }

@@ -150,8 +150,9 @@ async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header
         documents = []
         metadatas = []
 
-        for chunk in request.chunks:
-            chunk_id = str(uuid.uuid4())
+        for i, chunk in enumerate(request.chunks):
+            # Use stable chunk ID if provided, otherwise generate UUID
+            chunk_id = chunk.id if chunk.id else str(uuid.uuid4())
             ids.append(chunk_id)
             documents.append(chunk.content)
 
@@ -159,8 +160,8 @@ async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header
             metadata_dict = chunk.metadata.model_dump(mode="json", exclude_none=True)
             metadatas.append(metadata_dict)
 
-        # Add to collection
-        collection.add(
+        # Use upsert to handle re-indexing same chunks (idempotent)
+        collection.upsert(
             ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas
         )
 

@@ -182,7 +182,17 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 
 		// Convert to API chunks with metadata
 		for _, chunk := range verifiedChunks {
+			// Generate stable chunk ID (instead of UUID)
+			chunkID := chunker.GenerateChunkID(
+				idx.manifest.RepoID,
+				filePath,
+				chunk.StartLine,
+				chunk.EndLine,
+				chunk.Content,
+			)
+
 			apiChunk := api.Chunk{
+				ID:      chunkID,
 				Content: chunk.Content,
 				Metadata: api.ChunkMetadata{
 					RepoID:      idx.manifest.RepoID,
@@ -191,7 +201,7 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 					Language:    language,
 					StartLine:   chunk.StartLine,
 					EndLine:     chunk.EndLine,
-					ContentHash: chunk.Hash,
+					ContentHash: chunker.GenerateContentHash(chunk.Content),
 					ChunkTokens: chunk.TokenCount,
 					ModelID:     idx.options.Model,
 					IndexedAt:   time.Now(),
@@ -209,7 +219,7 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 			LineCount:   strings.Count(string(content), "\n") + 1,
 			ChunkCount:  len(verifiedChunks),
 			LastModTime: stat.ModTime().Format(time.RFC3339),
-			ContentHash: "", // TODO: Add content hash in 2A.4
+			ContentHash: chunker.GenerateContentHash(string(content)), // File content hash
 		}
 
 		fmt.Printf("  [%d/%d] %s: %d chunks\n", i+1, len(filePaths),
@@ -294,7 +304,17 @@ func (idx *Indexer) fullIndex() error {
 
 		// Convert to API chunks with metadata
 		for _, chunk := range verifiedChunks {
+			// Generate stable chunk ID (instead of UUID)
+			chunkID := chunker.GenerateChunkID(
+				idx.manifest.RepoID,
+				file.Path,
+				chunk.StartLine,
+				chunk.EndLine,
+				chunk.Content,
+			)
+
 			apiChunk := api.Chunk{
+				ID:      chunkID,
 				Content: chunk.Content,
 				Metadata: api.ChunkMetadata{
 					RepoID:      idx.manifest.RepoID,
@@ -303,7 +323,7 @@ func (idx *Indexer) fullIndex() error {
 					Language:    file.Language,
 					StartLine:   chunk.StartLine,
 					EndLine:     chunk.EndLine,
-					ContentHash: chunk.Hash,
+					ContentHash: chunker.GenerateContentHash(chunk.Content),
 					ChunkTokens: chunk.TokenCount,
 					ModelID:     idx.options.Model,
 					IndexedAt:   time.Now(),
@@ -378,10 +398,11 @@ func (idx *Indexer) fullIndex() error {
 		}
 	}
 
-	// Store indexed files with mtime
+	// Store indexed files with mtime and content hash
 	idx.manifest.IndexedFiles = make(map[string]config.FileInfo)
 	for _, file := range result.Files {
 		fullPath := filepath.Join(idx.options.RepoPath, file.Path)
+		content, _ := os.ReadFile(fullPath)
 		stat, _ := os.Stat(fullPath)
 		mtime := ""
 		if stat != nil {
@@ -393,7 +414,7 @@ func (idx *Indexer) fullIndex() error {
 			LineCount:   file.Lines,
 			ChunkCount:  0, // TODO: Calculate actual chunk count per file
 			LastModTime: mtime,
-			ContentHash: "", // TODO: Compute file content hash in Phase 2B
+			ContentHash: chunker.GenerateContentHash(string(content)),
 		}
 	}
 

@@ -26,6 +26,7 @@ class ChunkMetadata(BaseModel):
 
 # Chunk model
 class Chunk(BaseModel):
+    id: Optional[str] = None  # Stable chunk ID (SHA256-based, optional)
     content: str
     metadata: ChunkMetadata
 
@@ -68,7 +69,7 @@ class IndexResponse(BaseModel):
 # Query
 class QueryRequest(BaseModel):
     query: str
-    collection: Optional[str] = None 
+    collection: Optional[str] = None
     top_k: int = 10
     filters: Optional[Dict[str, str]] = None
     page: Optional[int] = 1

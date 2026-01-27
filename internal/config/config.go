@@ -158,3 +158,4 @@ func ValidateGlobalConfig(cfg *GlobalConfig) error {
 	return nil
 }
 // test incremental indexing
+// comment
