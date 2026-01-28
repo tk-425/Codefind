@@ -705,6 +705,7 @@ func handleQuery(args []string) {
 		fmt.Println("  --path=<prefix>   Filter by file path prefix")
 		fmt.Println("  --exclude=<pat>   Exclude paths matching regex pattern")
 		fmt.Println("  --top-k=<n>       Number of results (default 10)")
+		fmt.Println("  --limit=<n>       Alias for --top-k")
 		fmt.Println("  --page=<n>        Page number for pagination (default 1)")
 		fmt.Println("  --page-size=<n>   Results per page (default 20)")
 		os.Exit(1)
@@ -769,6 +770,8 @@ func parseQueryArgs(args []string) queryArgs {
 			qa.pathPrefix = strings.TrimPrefix(arg, "--path=")
 		} else if strings.HasPrefix(arg, "--top-k=") {
 			fmt.Sscanf(arg, "--top-k=%d", &qa.topK)
+		} else if strings.HasPrefix(arg, "--limit=") {
+			fmt.Sscanf(arg, "--limit=%d", &qa.topK)
 		} else if strings.HasPrefix(arg, "--page=") {
 			fmt.Sscanf(arg, "--page=%d", &qa.page)
 		} else if strings.HasPrefix(arg, "--page-size=") {

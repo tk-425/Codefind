@@ -52,7 +52,7 @@ func formatResult(index int, result api.QueryResult) string {
 	var sb strings.Builder
 
 	// Line 1: [index] file:lines (similarity: X%)
-	similarity := int(result.Distance * 100)
+	similarity := int(result.Similarity * 100)
 	sb.WriteString(indexColor.Sprintf("[%d] ", index))
 	sb.WriteString(fileColor.Sprintf("%s:%d-%d ",
 		result.Metadata.FilePath,

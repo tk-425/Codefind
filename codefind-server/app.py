@@ -49,6 +49,13 @@ if not OLLAMA_URL:
 if not CHROMADB_URL:
     raise ValueError("CHROMADB_URL environment variable not set. Check .env file.")
 
+# Cache tokenizer at startup (loading is slow, cache once)
+print("Loading tokenizer...")
+_cached_tokenizer = AutoTokenizer.from_pretrained(
+    "bert-base-uncased", trust_remote_code=True
+)
+print("Tokenizer loaded.")
+
 # --- Health Endpoint ---
 
 
@@ -87,16 +94,11 @@ async def health_check():
 
 @app.post("/tokenize", response_model=TokenizeResponse)
 async def tokenize(request: TokenizeRequest):
-    """Count tokens using transformers library."""
+    """Count tokens using cached tokenizer."""
     try:
-        # Load tokenizer for the model (defaults to BERT tokenizer for embedding models)
-        tokenizer = AutoTokenizer.from_pretrained(
-            "bert-base-uncased", trust_remote_code=True
-        )
-
         token_counts = []
         for text in request.input:
-            tokens = tokenizer.encode(text)
+            tokens = _cached_tokenizer.encode(text)
             token_counts.append(len(tokens))
 
         return TokenizeResponse(tokens=token_counts)
@@ -767,4 +769,4 @@ async def remove_admin(email: str, x_auth_key: Optional[str] = Header(None)):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=8080, timeout_keep_alive=300)

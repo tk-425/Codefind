@@ -256,7 +256,12 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 			ContentHash: chunker.GenerateContentHash(string(content)), // File content hash
 		}
 
-		fmt.Printf("  [%d/%d] %s: %d chunks\n", i+1, len(filePaths),
+		// Log with chunking method
+		methodTag := "[WINDOW]"
+		if result.Method == "symbol" {
+			methodTag = "[LSP]"
+		}
+		fmt.Printf("  %s [%d/%d] %s: %d chunks\n", methodTag, i+1, len(filePaths),
 			filePath, len(verifiedChunks))
 	}
 
@@ -375,7 +380,12 @@ func (idx *Indexer) fullIndex() error {
 			allChunks = append(allChunks, apiChunk)
 		}
 
-		fmt.Printf("  [%d/%d] %s: %d chunks\n", i+1, len(result.Files),
+		// Log with chunking method
+		methodTag := "[WINDOW]"
+		if chunkResult.Method == "symbol" {
+			methodTag = "[LSP]"
+		}
+		fmt.Printf("  %s [%d/%d] %s: %d chunks\n", methodTag, i+1, len(result.Files),
 			file.Path, len(verifiedChunks))
 		chunkCounts[file.Path] = len(verifiedChunks) // Store chunk count for this file
 	}
