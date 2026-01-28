@@ -14,6 +14,12 @@ from models import (
     EmbedResponse,
     IndexRequest,
     IndexResponse,
+    ChunkStatusRequest,
+    ChunkStatusResponse,
+    PurgeRequest,
+    PurgeResponse,
+    DeletedFileInfo,
+    StatsResponse,
     QueryRequest,
     QueryResponse,
     QueryResult,
@@ -258,6 +264,256 @@ async def clear_collection(
         raise HTTPException(status_code=500, detail=f"Clear error: {e}")
 
 
+# --- Chunk Status Update Endpoint (Protected) ---
+
+
+@app.patch("/chunks/status")
+async def update_chunk_status(
+    request: ChunkStatusRequest,
+    x_auth_key: Optional[str] = Header(None),
+):
+    """Mark chunks as deleted or active.
+
+    This soft-deletes chunks by updating their status metadata.
+    Used for tombstone mode - retains code history for querying.
+    """
+    # Validate auth (use header or request body)
+    auth_key = x_auth_key or request.auth_key
+    if not auth_key or not validate_auth_key(auth_key):
+        raise HTTPException(status_code=401, detail="Invalid or missing auth key")
+
+    try:
+        chroma = ChromaDBService()
+        collection = chroma.client.get_collection(name=request.collection)
+
+        # Get all chunks for the specified file paths
+        # ChromaDB doesn't support direct metadata updates, so we need to:
+        # 1. Query for chunks matching the file paths
+        # 2. Delete them
+        # 3. Re-add with updated metadata
+
+        updated_count = 0
+        now = datetime.now(timezone.utc)
+
+        for file_path in request.file_paths:
+            # Query for chunks from this file
+            results = collection.get(
+                where={"file_path": {"$eq": file_path}},
+                include=["documents", "metadatas", "embeddings"],
+            )
+
+            if not results["ids"]:
+                continue
+
+            # Update metadata for each chunk
+            for i, chunk_id in enumerate(results["ids"]):
+                metadata = results["metadatas"][i]
+                metadata["status"] = request.status
+                if request.status == "deleted":
+                    # Use ISO format with Z suffix for RFC3339 compatibility
+                    metadata["deleted_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if request.deleted_in_commit:
+                        metadata["deleted_in_commit"] = request.deleted_in_commit
+                else:
+                    # Restoring - clear deletion fields
+                    metadata.pop("deleted_at", None)
+                    metadata.pop("deleted_in_commit", None)
+
+            # Delete and re-add with updated metadata
+            collection.delete(ids=results["ids"])
+            collection.add(
+                ids=results["ids"],
+                documents=results["documents"],
+                metadatas=results["metadatas"],
+                embeddings=results["embeddings"],
+            )
+            updated_count += len(results["ids"])
+
+        return ChunkStatusResponse(updated_count=updated_count)
+
+    except Exception as e:
+        return ChunkStatusResponse(updated_count=0, error=str(e))
+
+
+# --- Purge Endpoint (Protected) ---
+
+
+@app.delete("/chunks/purge", response_model=PurgeResponse)
+async def purge_deleted_chunks(
+    request: PurgeRequest,
+    x_auth_key: Optional[str] = Header(None),
+):
+    """Permanently remove deleted chunks older than specified date.
+
+    Protected endpoint - requires X-Auth-Key header.
+    """
+    # Validate auth (use header or request body)
+    auth_key = x_auth_key or request.auth_key
+    if not auth_key or not validate_auth_key(auth_key):
+        return PurgeResponse(chunks_found=0, chunks_removed=0, error="Unauthorized")
+
+    try:
+        collection_name = request.collection
+        if not collection_name:
+            return PurgeResponse(
+                chunks_found=0, chunks_removed=0, error="Collection required"
+            )
+
+        # Get or create collection
+        try:
+            chroma = ChromaDBService()
+            collection = chroma.client.get_collection(name=collection_name)
+        except Exception:
+            return PurgeResponse(
+                chunks_found=0,
+                chunks_removed=0,
+                error=f"Collection '{collection_name}' not found",
+            )
+
+        # Query for deleted chunks
+        results = collection.get(
+            where={"status": {"$eq": "deleted"}}, include=["metadatas"]
+        )
+
+        if not results or not results["ids"]:
+            return PurgeResponse(chunks_found=0, chunks_removed=0)
+
+        # Filter by cutoff date if provided
+        chunks_to_remove = []
+        cutoff_date = None
+        if request.cutoff_date:
+            from datetime import datetime
+
+            try:
+                cutoff_date = datetime.fromisoformat(
+                    request.cutoff_date.replace("Z", "+00:00")
+                )
+            except ValueError:
+                pass
+
+        for i, chunk_id in enumerate(results["ids"]):
+            metadata = results["metadatas"][i] if results["metadatas"] else {}
+            deleted_at_str = metadata.get("deleted_at", "")
+
+            # If cutoff date specified, filter by age
+            if cutoff_date and deleted_at_str:
+                try:
+                    deleted_at = datetime.fromisoformat(
+                        deleted_at_str.replace("Z", "+00:00")
+                    )
+                    if deleted_at > cutoff_date:
+                        continue  # Skip, not old enough
+                except ValueError:
+                    pass  # Include if can't parse date
+
+            chunks_to_remove.append(chunk_id)
+
+        chunks_found = len(chunks_to_remove)
+
+        # Aggregate per-file details for --list output
+        file_info_map = {}  # file_path -> {chunk_count, deleted_at}
+        for i, chunk_id in enumerate(results["ids"]):
+            if chunk_id not in chunks_to_remove:
+                continue
+            metadata = results["metadatas"][i] if results["metadatas"] else {}
+            file_path = metadata.get("file_path", "unknown")
+            deleted_at_str = metadata.get("deleted_at", "")
+
+            if file_path not in file_info_map:
+                file_info_map[file_path] = {
+                    "chunk_count": 0,
+                    "deleted_at": deleted_at_str,
+                }
+            file_info_map[file_path]["chunk_count"] += 1
+
+        # Convert to list of DeletedFileInfo
+        files = [
+            DeletedFileInfo(
+                file_path=fp,
+                chunk_count=info["chunk_count"],
+                deleted_at=info["deleted_at"],
+            )
+            for fp, info in file_info_map.items()
+        ]
+
+        # If dry run, return count and file details
+        if request.dry_run:
+            return PurgeResponse(
+                chunks_found=chunks_found, chunks_removed=0, bytes_freed=0, files=files
+            )
+
+        # Actually delete the chunks
+        if chunks_to_remove:
+            collection.delete(ids=chunks_to_remove)
+
+        return PurgeResponse(
+            chunks_found=chunks_found,
+            chunks_removed=len(chunks_to_remove),
+            bytes_freed=0,  # ChromaDB doesn't report bytes
+            files=files,
+        )
+
+    except Exception as e:
+        return PurgeResponse(chunks_found=0, chunks_removed=0, error=str(e))
+
+
+# --- Stats Endpoint (Public) ---
+
+
+@app.get("/stats/{collection_name}", response_model=StatsResponse)
+async def get_collection_stats(collection_name: str):
+    """Get statistics for a collection.
+
+    Public endpoint - no authentication required.
+    """
+    try:
+        chroma = ChromaDBService()
+        try:
+            collection = chroma.client.get_collection(name=collection_name)
+        except Exception:
+            return StatsResponse(
+                active_chunks=0,
+                deleted_chunks=0,
+                total_chunks=0,
+                overhead_percent=0.0,
+                error=f"Collection '{collection_name}' not found",
+            )
+
+        # Get all chunks and count by status
+        results = collection.get(include=["metadatas"])
+
+        active_count = 0
+        deleted_count = 0
+
+        if results and results["ids"]:
+            for i, _ in enumerate(results["ids"]):
+                metadata = results["metadatas"][i] if results["metadatas"] else {}
+                status = metadata.get("status", "active")
+                if status == "deleted":
+                    deleted_count += 1
+                else:
+                    active_count += 1
+
+        total = active_count + deleted_count
+        overhead = (deleted_count / total * 100) if total > 0 else 0.0
+
+        return StatsResponse(
+            active_chunks=active_count,
+            deleted_chunks=deleted_count,
+            total_chunks=total,
+            overhead_percent=round(overhead, 1),
+        )
+
+    except Exception as e:
+        return StatsResponse(
+            active_chunks=0,
+            deleted_chunks=0,
+            total_chunks=0,
+            overhead_percent=0.0,
+            error=str(e),
+        )
+
+
 # --- Query Endpoint (Public) ---
 
 
@@ -317,6 +573,17 @@ async def query(request: QueryRequest):
                 filter_conditions.append({"language": {"$eq": request.languages[0]}})
             else:
                 filter_conditions.append({"language": {"$in": request.languages}})
+
+        # Phase 2C: Handle tombstone mode filters
+        if request.deleted_only:
+            # Show only deleted chunks
+            filter_conditions.append({"status": {"$eq": "deleted"}})
+        elif request.include_deleted:
+            # Include both active and deleted - no status filter
+            pass
+        else:
+            # Default: exclude deleted chunks (only show active)
+            filter_conditions.append({"status": {"$eq": "active"}})
 
         # Handle legacy filters dict (backward compatibility)
         if request.filters:

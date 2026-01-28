@@ -66,6 +66,52 @@ class IndexResponse(BaseModel):
     error: Optional[str] = None
 
 
+# Chunk Status Update (for tombstone mode)
+class ChunkStatusRequest(BaseModel):
+    auth_key: str
+    collection: str
+    file_paths: List[str]  # Files whose chunks should be marked deleted
+    status: str = "deleted"  # "active" or "deleted"
+    deleted_in_commit: Optional[str] = None
+
+
+class ChunkStatusResponse(BaseModel):
+    updated_count: int
+    error: Optional[str] = None
+
+
+# Purge (Cleanup Deleted Chunks)
+class PurgeRequest(BaseModel):
+    auth_key: Optional[str] = None
+    collection: str
+    older_than: int = 0  # Days since deletion
+    cutoff_date: Optional[str] = None  # RFC3339 date
+    dry_run: bool = False
+
+
+class DeletedFileInfo(BaseModel):
+    file_path: str
+    chunk_count: int
+    deleted_at: str  # RFC3339 format
+
+
+class PurgeResponse(BaseModel):
+    chunks_found: int
+    chunks_removed: int
+    bytes_freed: int = 0
+    files: List[DeletedFileInfo] = []  # Per-file details for --list
+    error: Optional[str] = None
+
+
+# Stats
+class StatsResponse(BaseModel):
+    active_chunks: int
+    deleted_chunks: int
+    total_chunks: int
+    overhead_percent: float
+    error: Optional[str] = None
+
+
 # Query
 class QueryRequest(BaseModel):
     query: str
@@ -78,6 +124,9 @@ class QueryRequest(BaseModel):
     languages: Optional[List[str]] = None  # e.g., ["python", "go"]
     path_prefix: Optional[str] = None  # e.g., "internal/"
     exclude_path: Optional[str] = None  # e.g., "vendor|test"
+    # Phase 2C: Tombstone mode filters
+    include_deleted: bool = False  # Include deleted chunks in results
+    deleted_only: bool = False  # Show only deleted chunks
 
 
 class QueryResult(BaseModel):

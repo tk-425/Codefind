@@ -69,7 +69,18 @@ func formatResult(index int, result api.QueryResult) string {
 	sb.WriteString("    ")
 	sb.WriteString(repoColor.Sprintf("[%s] ", repoIDShort))
 	sb.WriteString(fmt.Sprintf("%s | ", meta.ProjectName))
-	sb.WriteString(langColor.Sprintf("%s\n", meta.Language))
+	sb.WriteString(langColor.Sprintf("%s", meta.Language))
+	
+	// Show [DELETED] prefix for deleted chunks (tombstone mode)
+	if meta.Status == "deleted" {
+		deletedColor := color.New(color.FgRed, color.Bold)
+		deletedAt := ""
+		if meta.DeletedAt != nil {
+			deletedAt = meta.DeletedAt.Format("2006-01-02")
+		}
+		sb.WriteString(deletedColor.Sprintf(" [DELETED %s]", deletedAt))
+	}
+	sb.WriteString("\n")
 
 	// Lines 3+: Content preview (first 4 lines)
 	preview := getContentPreview(result.Content, 4)

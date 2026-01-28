@@ -94,6 +94,56 @@ type IndexResponse struct {
 	Error         string `json:"error,omitempty"`
 }
 
+// --- Chunk Status Update Endpoint (Tombstone Mode) ---
+
+type ChunkStatusRequest struct {
+	AuthKey         string   `json:"auth_key"`
+	Collection      string   `json:"collection"`
+	FilePaths       []string `json:"file_paths"`         // Files whose chunks should be marked
+	Status          string   `json:"status"`             // "active" or "deleted"
+	DeletedInCommit string   `json:"deleted_in_commit,omitempty"`
+}
+
+type ChunkStatusResponse struct {
+	UpdatedCount int    `json:"updated_count"`
+	Error        string `json:"error,omitempty"`
+}
+
+// --- Purge Endpoint (Cleanup Deleted Chunks) ---
+
+type PurgeRequest struct {
+	AuthKey    string `json:"auth_key,omitempty"`
+	Collection string `json:"collection"`          // ChromaDB collection
+	OlderThan  int    `json:"older_than"`          // Days since deletion
+	CutoffDate string `json:"cutoff_date"`         // RFC3339 date
+	DryRun     bool   `json:"dry_run,omitempty"`   // Preview without removing
+}
+
+type PurgeResponse struct {
+	ChunksFound   int               `json:"chunks_found"`
+	ChunksRemoved int               `json:"chunks_removed"`
+	BytesFreed    int64             `json:"bytes_freed"`
+	Files         []DeletedFileInfo `json:"files,omitempty"` // Per-file details for --list
+	Error         string            `json:"error,omitempty"`
+}
+
+// DeletedFileInfo contains per-file deletion info
+type DeletedFileInfo struct {
+	FilePath   string `json:"file_path"`
+	ChunkCount int    `json:"chunk_count"`
+	DeletedAt  string `json:"deleted_at"` // RFC3339 format
+}
+
+// --- Stats Endpoint ---
+
+type StatsResponse struct {
+	ActiveChunks    int     `json:"active_chunks"`
+	DeletedChunks   int     `json:"deleted_chunks"`
+	TotalChunks     int     `json:"total_chunks"`
+	OverheadPercent float64 `json:"overhead_percent"`
+	Error           string  `json:"error,omitempty"`
+}
+
 // --- Query Endpoint ---
 
 type QueryRequest struct {
@@ -107,6 +157,9 @@ type QueryRequest struct {
 	Languages   []string `json:"languages,omitempty"`    // Filter by language(s), e.g., ["python", "go"]
 	PathPrefix  string   `json:"path_prefix,omitempty"`  // Filter by file path prefix
 	ExcludePath string   `json:"exclude_path,omitempty"` // Exclude paths matching pattern
+	// Phase 2C: Tombstone mode filters
+	IncludeDeleted bool `json:"include_deleted,omitempty"` // Include deleted chunks in results
+	DeletedOnly    bool `json:"deleted_only,omitempty"`    // Show only deleted chunks
 }
 
 type QueryResult struct {

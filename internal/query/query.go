@@ -18,13 +18,15 @@ func NewQueryClient(apiClient *client.APIClient) *QueryClient {
 }
 
 // Search performs a semantic search query with optional filters
-func (qc *QueryClient) Search(query string, topK int, languages []string, pathPrefix string, excludePath string) (*api.QueryResponse, error) {
+func (qc *QueryClient) Search(query string, topK int, languages []string, pathPrefix string, excludePath string, includeDeleted bool, deletedOnly bool) (*api.QueryResponse, error) {
 	req := api.QueryRequest{
-		Query:       query,
-		TopK:        topK,
-		Languages:   languages,
-		PathPrefix:  pathPrefix,
-		ExcludePath: excludePath,
+		Query:          query,
+		TopK:           topK,
+		Languages:      languages,
+		PathPrefix:     pathPrefix,
+		ExcludePath:    excludePath,
+		IncludeDeleted: includeDeleted,
+		DeletedOnly:    deletedOnly,
 	}
 	return qc.apiClient.Query(req)
 }
