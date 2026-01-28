@@ -9,6 +9,41 @@ import (
 	"github.com/tk-425/Codefind/internal/lsp"
 )
 
+// LSP Error types for classifying failures
+const (
+	LSPErrorTimeout      = "timeout"
+	LSPErrorCrash        = "crash"
+	LSPErrorInitFailed   = "init_failed"
+	LSPErrorSymbolFailed = "symbol_failed"
+)
+
+// LSPError wraps LSP-related errors with type classification
+type LSPError struct {
+	Type    string // timeout, crash, init_failed, symbol_failed
+	Message string
+	Err     error
+}
+
+func (e *LSPError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("%s: %s: %v", e.Type, e.Message, e.Err)
+	}
+	return fmt.Sprintf("%s: %s", e.Type, e.Message)
+}
+
+func (e *LSPError) Unwrap() error {
+	return e.Err
+}
+
+// NewLSPError creates a new LSP error with the given type and message
+func NewLSPError(errType, message string, err error) *LSPError {
+	return &LSPError{
+		Type:    errType,
+		Message: message,
+		Err:     err,
+	}
+}
+
 // SymbolChunker chunks code based on LSP document symbols
 type SymbolChunker struct {
 	config      ChunkConfig
@@ -21,9 +56,9 @@ type SymbolChunker struct {
 // SymbolChunk represents a chunk derived from a code symbol
 type SymbolChunk struct {
 	Chunk
-	SymbolName string     // Name of the symbol (e.g., "handleQuery")
-	SymbolKind string     // Kind of symbol (e.g., "function", "class")
-	ParentName string     // Parent symbol name (e.g., class name for methods)
+	SymbolName string // Name of the symbol (e.g., "handleQuery")
+	SymbolKind string // Kind of symbol (e.g., "function", "class")
+	ParentName string // Parent symbol name (e.g., class name for methods)
 }
 
 // NewSymbolChunker creates a new symbol-based chunker
@@ -50,14 +85,30 @@ func (sc *SymbolChunker) ChunkFileWithSymbols(content, filePath string) ([]Symbo
 	defer cancel()
 
 	if err := sc.lspClient.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("LSP initialize failed: %w", err)
+		// Check if context was cancelled (timeout)
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, NewLSPError(LSPErrorTimeout, "LSP initialization timed out (30s)", err)
+		}
+		// Check if process crashed
+		if !sc.lspClient.IsAlive() {
+			return nil, NewLSPError(LSPErrorCrash, "LSP process crashed during initialization", err)
+		}
+		return nil, NewLSPError(LSPErrorInitFailed, "LSP initialize failed", err)
 	}
 
 	// Get symbols
 	symbols, err := sc.lspClient.DocumentSymbols(ctx, filePath)
 	if err != nil {
 		sc.lspClient.Shutdown(ctx)
-		return nil, fmt.Errorf("document symbols failed: %w", err)
+		// Check if context was cancelled (timeout)
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, NewLSPError(LSPErrorTimeout, "document symbols request timed out (30s)", err)
+		}
+		// Check if process crashed
+		if !sc.lspClient.IsAlive() {
+			return nil, NewLSPError(LSPErrorCrash, "LSP process crashed during symbol extraction", err)
+		}
+		return nil, NewLSPError(LSPErrorSymbolFailed, "document symbols failed", err)
 	}
 
 	// Shutdown LSP
