@@ -65,10 +65,11 @@ func (wc *WindowChunker) ChunkFile(content string, filePath string) ([]Chunk, er
 
 		// Create chunk
 		chunk := Chunk{
-			Content:   chunkText,
-			StartLine: currentLine,
-			EndLine:   endLine,
-			Hash:      hashContent(chunkText),
+			Content:    chunkText,
+			StartLine:  currentLine,
+			EndLine:    endLine,
+			Hash:       hashContent(chunkText),
+			TokenCount: int(float32(len(chunkText)) / wc.config.CharsPerToken),
 		}
 
 		chunks = append(chunks, chunk)

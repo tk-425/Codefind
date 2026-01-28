@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/indexer"
+	"github.com/tk-425/Codefind/internal/lsp"
 	"github.com/tk-425/Codefind/internal/query"
 	"github.com/tk-425/Codefind/internal/stats"
 	"github.com/tk-425/Codefind/pkg/api"
@@ -52,6 +54,8 @@ func main() {
 			os.Exit(1)
 		}
 		handleOpen(os.Args[2])
+	case "lsp":
+		handleLSP(os.Args[2:])
 	case "stats":
 		handleStats(os.Args[2:])
 	case "cleanup":
@@ -263,18 +267,38 @@ func handleChunkFile() {
 }
 
 func handleIndex() {
+	// Parse flags
+	indexCmd := flag.NewFlagSet("index", flag.ExitOnError)
+	windowOnly := indexCmd.Bool("window-only", false, "Force window-based chunking (skip LSP)")
+	
+	// Find where flags start (after "index" and optional path)
+	args := os.Args[2:] // Skip "codefind" and "index"
+	
+	// Separate path from flags
+	repoPath := "."
+	flagStart := 0
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			flagStart = i
+			break
+		}
+		if i == 0 && !strings.HasPrefix(arg, "-") {
+			repoPath = arg
+			flagStart = 1
+		}
+	}
+	
+	// Parse remaining flags
+	if flagStart < len(args) {
+		indexCmd.Parse(args[flagStart:])
+	}
+
 	// Load global config
 	cfg, err := config.LoadGlobalConfig()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		fmt.Println("Run 'codefind init' first")
 		os.Exit(1)
-	}
-
-	// Use current directory
-	repoPath := "."
-	if len(os.Args) >= 3 {
-		repoPath = os.Args[2]
 	}
 
 	// Validate repo path
@@ -289,12 +313,20 @@ func handleIndex() {
 		os.Exit(1)
 	}
 
+	// Show chunking mode
+	if *windowOnly {
+		fmt.Println("📦 Chunking mode: Window-only (LSP disabled)")
+	} else {
+		fmt.Println("📦 Chunking mode: Hybrid (LSP when available)")
+	}
+
 	// Create and run indexer
 	indexOpts := indexer.IndexOptions{
-		RepoPath:  repoPath,
-		ServerURL: cfg.ServerURL,
-		AuthKey:   "secret-key-123", // TODO: Load from config in Phase 3A
-		Model:     "unclemusclez/jina-embeddings-v2-base-code:latest",
+		RepoPath:   repoPath,
+		ServerURL:  cfg.ServerURL,
+		AuthKey:    "secret-key-123", // TODO: Load from config in Phase 3A
+		Model:      "unclemusclez/jina-embeddings-v2-base-code:latest",
+		WindowOnly: *windowOnly,
 	}
 
 	idx := indexer.NewIndexer(indexOpts)
@@ -390,6 +422,241 @@ func handleStats(args []string) {
 	fmt.Println(stats.FormatStats(projectName, statsResp))
 }
 
+// handleLSP handles the lsp command
+func handleLSP(args []string) {
+	// Parse subcommand
+	subcommand := "check"
+	if len(args) > 0 {
+		subcommand = args[0]
+	}
+
+	switch subcommand {
+	case "check":
+		// Force refresh if --refresh flag
+		forceRefresh := false
+		for _, arg := range args {
+			if arg == "--refresh" || arg == "-r" {
+				forceRefresh = true
+				break
+			}
+		}
+
+		lsps, err := lsp.GetOrDiscoverLSPs(forceRefresh)
+		if err != nil {
+			fmt.Printf("Error discovering LSPs: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println(lsp.FormatLSPStatus(lsps))
+
+	case "symbols":
+		// Extract symbols from a file
+		if len(args) < 3 {
+			fmt.Println("Usage: codefind lsp symbols <language> <file>")
+			fmt.Println("Example: codefind lsp symbols go ./cmd/codefind/main.go")
+			os.Exit(1)
+		}
+		language := args[1]
+		filePath := args[2]
+
+		// Get absolute path
+		absPath, err := filepath.Abs(filePath)
+		if err != nil {
+			fmt.Printf("Error resolving path: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Get workspace root (current directory)
+		workspaceRoot, _ := os.Getwd()
+
+		fmt.Printf("Starting %s LSP for %s...\n", language, absPath)
+
+		// Create LSP client
+		client, err := lsp.NewLSPClient(language, workspaceRoot)
+		if err != nil {
+			fmt.Printf("Error creating LSP client: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Initialize with timeout (30s for slower LSPs like pyright)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		fmt.Println("Initializing LSP...")
+		if err := client.Initialize(ctx); err != nil {
+			fmt.Printf("Error initializing LSP: %v\n", err)
+			client.Shutdown(ctx)
+			os.Exit(1)
+		}
+
+		fmt.Println("Requesting document symbols...")
+		symbols, err := client.DocumentSymbols(ctx, absPath)
+		if err != nil {
+			fmt.Printf("Error getting symbols: %v\n", err)
+			client.Shutdown(ctx)
+			os.Exit(1)
+		}
+
+		// Shutdown
+		client.Shutdown(ctx)
+
+		// Display symbols
+		fmt.Printf("\nFound %d symbols:\n", len(symbols))
+		fmt.Println("──────────────────────────────────────────")
+		printSymbols(symbols, 0)
+
+	case "chunks":
+		// Chunk a file using LSP symbols
+		if len(args) < 3 {
+			fmt.Println("Usage: codefind lsp chunks <language> <file>")
+			fmt.Println("Example: codefind lsp chunks go ./cmd/codefind/main.go")
+			os.Exit(1)
+		}
+		language := args[1]
+		filePath := args[2]
+
+		// Get absolute path
+		absPath, err := filepath.Abs(filePath)
+		if err != nil {
+			fmt.Printf("Error resolving path: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Read file content
+		content, err := os.ReadFile(absPath)
+		if err != nil {
+			fmt.Printf("Error reading file: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Get workspace root
+		workspaceRoot, _ := os.Getwd()
+
+		fmt.Printf("Chunking %s with %s LSP...\n", absPath, language)
+
+		// Create symbol chunker
+		chunks, err := chunker.ChunkFileWithLSP(string(content), absPath, language, workspaceRoot, chunker.DefaultConfig())
+		if err != nil {
+			fmt.Printf("Error chunking file: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Display chunks
+		fmt.Printf("\nGenerated %d chunks:\n", len(chunks))
+		fmt.Println("──────────────────────────────────────────")
+		for i, c := range chunks {
+			parent := ""
+			if c.ParentName != "" {
+				parent = fmt.Sprintf(" (in %s)", c.ParentName)
+			}
+			fmt.Printf("\n[%d] %s (%s)%s\n", i+1, c.SymbolName, c.SymbolKind, parent)
+			fmt.Printf("    Lines: %d-%d | Tokens: ~%d\n", c.StartLine, c.EndLine, c.TokenCount)
+			fmt.Printf("    Hash: %s\n", c.Hash[:12])
+
+			// Show preview (first 100 chars)
+			preview := c.Content
+			if len(preview) > 100 {
+				preview = preview[:100] + "..."
+			}
+			preview = strings.ReplaceAll(preview, "\n", "↵")
+			fmt.Printf("    Preview: %s\n", preview)
+		}
+
+	case "hybrid":
+		// Test hybrid chunking on a file
+		if len(args) < 2 {
+			fmt.Println("Usage: codefind lsp hybrid <file> [--window-only]")
+			fmt.Println("Example: codefind lsp hybrid ./cmd/codefind/main.go")
+			os.Exit(1)
+		}
+		filePath := args[1]
+
+		// Check for --window-only flag
+		windowOnly := false
+		for _, arg := range args {
+			if arg == "--window-only" {
+				windowOnly = true
+				break
+			}
+		}
+
+		// Get absolute path
+		absPath, err := filepath.Abs(filePath)
+		if err != nil {
+			fmt.Printf("Error resolving path: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Read file content
+		content, err := os.ReadFile(absPath)
+		if err != nil {
+			fmt.Printf("Error reading file: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Get workspace root
+		workspaceRoot, _ := os.Getwd()
+
+		fmt.Printf("Hybrid chunking: %s\n", absPath)
+		if windowOnly {
+			fmt.Println("Mode: Window-only (forced)")
+		} else {
+			fmt.Println("Mode: Auto-detect (LSP if available)")
+		}
+
+		// Create hybrid chunker
+		hybridChunker := chunker.NewHybridChunker(chunker.DefaultConfig(), workspaceRoot, windowOnly)
+		result, err := hybridChunker.ChunkFile(string(content), absPath)
+		if err != nil {
+			fmt.Printf("Error chunking file: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Display result
+		fmt.Printf("\nResult:\n")
+		fmt.Println("──────────────────────────────────────────")
+		fmt.Printf("Language: %s\n", result.Language)
+		fmt.Printf("Method: %s\n", result.Method)
+		fmt.Printf("LSP Available: %v\n", result.LSPAvailable)
+		fmt.Printf("Chunks: %d\n", len(result.Chunks))
+
+		// Show first few chunks
+		fmt.Printf("\nFirst 5 chunks:\n")
+		for i, c := range result.Chunks {
+			if i >= 5 {
+				fmt.Printf("\n... and %d more chunks\n", len(result.Chunks)-5)
+				break
+			}
+			name := c.SymbolName
+			if name == "" {
+				name = fmt.Sprintf("window-%d", i+1)
+			}
+			fmt.Printf("[%d] %s (%s) - Lines %d-%d, ~%d tokens\n",
+				i+1, name, c.SymbolKind, c.StartLine, c.EndLine, c.TokenCount)
+		}
+
+	default:
+		fmt.Printf("Unknown lsp subcommand: %s\n", subcommand)
+		fmt.Println("Usage:")
+		fmt.Println("  codefind lsp check [--refresh]       - Check available LSP servers")
+		fmt.Println("  codefind lsp symbols <lang> <file>   - Extract symbols from file")
+		fmt.Println("  codefind lsp chunks <lang> <file>    - Chunk file using symbols")
+		fmt.Println("  codefind lsp hybrid <file> [--window-only] - Test hybrid chunking")
+		os.Exit(1)
+	}
+}
+
+// printSymbols recursively prints document symbols with indentation
+func printSymbols(symbols []lsp.DocumentSymbol, indent int) {
+	for _, sym := range symbols {
+		prefix := strings.Repeat("  ", indent)
+		fmt.Printf("%s• %s (%s) [L%d-%d]\n", prefix, sym.Name, sym.Kind.String(), sym.Range.Start.Line+1, sym.Range.End.Line+1)
+		if len(sym.Children) > 0 {
+			printSymbols(sym.Children, indent+1)
+		}
+	}
+}
+
 // savedResult stores query results for 'codefind open' command
 type savedResult struct {
 	ID        string `json:"id"`
@@ -438,6 +705,7 @@ func handleQuery(args []string) {
 		fmt.Println("  --path=<prefix>   Filter by file path prefix")
 		fmt.Println("  --exclude=<pat>   Exclude paths matching regex pattern")
 		fmt.Println("  --top-k=<n>       Number of results (default 10)")
+		fmt.Println("  --limit=<n>       Alias for --top-k")
 		fmt.Println("  --page=<n>        Page number for pagination (default 1)")
 		fmt.Println("  --page-size=<n>   Results per page (default 20)")
 		os.Exit(1)
@@ -502,6 +770,8 @@ func parseQueryArgs(args []string) queryArgs {
 			qa.pathPrefix = strings.TrimPrefix(arg, "--path=")
 		} else if strings.HasPrefix(arg, "--top-k=") {
 			fmt.Sscanf(arg, "--top-k=%d", &qa.topK)
+		} else if strings.HasPrefix(arg, "--limit=") {
+			fmt.Sscanf(arg, "--limit=%d", &qa.topK)
 		} else if strings.HasPrefix(arg, "--page=") {
 			fmt.Sscanf(arg, "--page=%d", &qa.page)
 		} else if strings.HasPrefix(arg, "--page-size=") {

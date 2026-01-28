@@ -16,10 +16,11 @@ import (
 
 // IndexOptions contains options for indexing
 type IndexOptions struct {
-	RepoPath  string // Repository path
-	ServerURL string // Server URL for API calls
-	AuthKey   string // Authentication key
-	Model     string // Embedding model name
+	RepoPath   string // Repository path
+	ServerURL  string // Server URL for API calls
+	AuthKey    string // Authentication key
+	Model      string // Embedding model name
+	WindowOnly bool   // Force window-based chunking (skip LSP)
 }
 
 // Indexer orchestrates the indexing pipeline
@@ -192,12 +193,18 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 		// Get file info for language detection
 		language := LanguageFromExtension(filePath)
 
-		// Chunk the file
-		wc := chunker.NewWindowChunker(chunker.DefaultConfig())
-		chunks, err := wc.ChunkFile(string(content), filePath)
+		// Chunk the file using hybrid chunker (LSP if available, else window)
+		hc := chunker.NewHybridChunker(chunker.DefaultConfig(), idx.options.RepoPath, idx.options.WindowOnly)
+		result, err := hc.ChunkFile(string(content), filePath)
 		if err != nil {
 			fmt.Printf("⚠️ Failed to chunk %s: %v\n", filePath, err)
 			continue
+		}
+
+		// Convert SymbolChunks to Chunks for tokenization
+		chunks := make([]chunker.Chunk, len(result.Chunks))
+		for j, sc := range result.Chunks {
+			chunks[j] = sc.Chunk
 		}
 
 		// Tokenize chunks (300 to stay well under BERT's 512 max)
@@ -249,7 +256,12 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 			ContentHash: chunker.GenerateContentHash(string(content)), // File content hash
 		}
 
-		fmt.Printf("  [%d/%d] %s: %d chunks\n", i+1, len(filePaths),
+		// Log with chunking method
+		methodTag := "[WINDOW]"
+		if result.Method == "symbol" {
+			methodTag = "[LSP]"
+		}
+		fmt.Printf("  %s [%d/%d] %s: %d chunks\n", methodTag, i+1, len(filePaths),
 			filePath, len(verifiedChunks))
 	}
 
@@ -315,12 +327,18 @@ func (idx *Indexer) fullIndex() error {
 			continue
 		}
 
-		// Chunk the file
-		wc := chunker.NewWindowChunker(chunker.DefaultConfig())
-		chunks, err := wc.ChunkFile(string(content), file.Path)
+		// Chunk the file using hybrid chunker (LSP if available, else window)
+		hc := chunker.NewHybridChunker(chunker.DefaultConfig(), idx.options.RepoPath, idx.options.WindowOnly)
+		chunkResult, err := hc.ChunkFile(string(content), file.Path)
 		if err != nil {
 			fmt.Printf("⚠️ Failed to chunk %s: %v\n", file.Path, err)
 			continue
+		}
+
+		// Convert SymbolChunks to Chunks for tokenization
+		chunks := make([]chunker.Chunk, len(chunkResult.Chunks))
+		for j, sc := range chunkResult.Chunks {
+			chunks[j] = sc.Chunk
 		}
 
 		// Tokenize chunks (300 to stay well under BERT's 512 max)
@@ -362,7 +380,12 @@ func (idx *Indexer) fullIndex() error {
 			allChunks = append(allChunks, apiChunk)
 		}
 
-		fmt.Printf("  [%d/%d] %s: %d chunks\n", i+1, len(result.Files),
+		// Log with chunking method
+		methodTag := "[WINDOW]"
+		if chunkResult.Method == "symbol" {
+			methodTag = "[LSP]"
+		}
+		fmt.Printf("  %s [%d/%d] %s: %d chunks\n", methodTag, i+1, len(result.Files),
 			file.Path, len(verifiedChunks))
 		chunkCounts[file.Path] = len(verifiedChunks) // Store chunk count for this file
 	}
