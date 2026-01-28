@@ -14,6 +14,7 @@ import (
 
 	"github.com/manifoldco/promptui"
 	"github.com/tk-425/Codefind/internal/chunker"
+	"github.com/tk-425/Codefind/internal/cleanup"
 	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/indexer"
@@ -50,6 +51,8 @@ func main() {
 			os.Exit(1)
 		}
 		handleOpen(os.Args[2])
+	case "cleanup":
+		handleCleanup(os.Args[2:])
 	case "clear":
 		repoPath := "."
 		if len(os.Args) >= 3 {
@@ -298,6 +301,54 @@ func handleIndex() {
 	}
 }
 
+// handleCleanup handles the cleanup command for purging old deleted chunks
+func handleCleanup(args []string) {
+	// Load global config
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Printf("Error: Not initialized. Run 'codefind init' first.\n")
+		os.Exit(1)
+	}
+
+	// Get repo ID for current directory
+	absPath, err := filepath.Abs(".")
+	if err != nil {
+		fmt.Printf("Error: cannot determine current directory: %v\n", err)
+		os.Exit(1)
+	}
+	repoID := indexer.GenerateRepoID(absPath)
+
+	// Parse cleanup options
+	opts := cleanup.CleanupOptions{
+		Project: repoID,
+	}
+
+	for _, arg := range args {
+		if arg == "--dry-run" {
+			opts.DryRun = true
+		} else if arg == "--list" {
+			opts.ListOnly = true
+		} else if strings.HasPrefix(arg, "--older-than=") {
+			fmt.Sscanf(arg, "--older-than=%d", &opts.OlderThan)
+		}
+	}
+
+	// Create API client and cleanup client
+	apiClient := client.NewAPIClient(cfg.ServerURL)
+	apiClient.SetAuthKey("secret-key-123") // TODO: Load from config in Phase 3A
+	cc := cleanup.NewCleanupClient(apiClient)
+
+	// Run cleanup
+	result, err := cc.Cleanup(opts)
+	if err != nil {
+		fmt.Printf("Cleanup failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display result
+	fmt.Println(cleanup.FormatResult(result, opts.ListOnly))
+}
+
 // savedResult stores query results for 'codefind open' command
 type savedResult struct {
 	ID        string `json:"id"`
@@ -311,13 +362,15 @@ type savedResult struct {
 
 // queryArgs holds parsed query arguments
 type queryArgs struct {
-	projectID   string
-	lang        string
-	pathPrefix  string
-	excludePath string
-	topK        int
-	page        int
-	pageSize    int
+	projectID      string
+	lang           string
+	pathPrefix     string
+	excludePath    string
+	topK           int
+	page           int
+	pageSize       int
+	includeDeleted bool
+	deletedOnly    bool
 }
 
 func handleQuery(args []string) {
@@ -371,7 +424,7 @@ func handleQuery(args []string) {
 	}
 
 	// Execute search with new filter fields
-	resp, err := qc.Search(queryText, qa.topK, languages, qa.pathPrefix, qa.excludePath)
+	resp, err := qc.Search(queryText, qa.topK, languages, qa.pathPrefix, qa.excludePath, qa.includeDeleted, qa.deletedOnly)
 	if err != nil {
 		fmt.Printf("Query failed: %v\n", err)
 		os.Exit(1)
@@ -414,6 +467,10 @@ func parseQueryArgs(args []string) queryArgs {
 			fmt.Sscanf(arg, "--page-size=%d", &qa.pageSize)
 		} else if strings.HasPrefix(arg, "--exclude=") {
 			qa.excludePath = strings.TrimPrefix(arg, "--exclude=")
+		} else if arg == "--include-deleted" {
+			qa.includeDeleted = true
+		} else if arg == "--deleted-only" {
+			qa.deletedOnly = true
 		}
 	}
 

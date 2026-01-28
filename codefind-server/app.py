@@ -16,6 +16,9 @@ from models import (
     IndexResponse,
     ChunkStatusRequest,
     ChunkStatusResponse,
+    PurgeRequest,
+    PurgeResponse,
+    DeletedFileInfo,
     QueryRequest,
     QueryResponse,
     QueryResult,
@@ -331,6 +334,128 @@ async def update_chunk_status(
         return ChunkStatusResponse(updated_count=0, error=str(e))
 
 
+# --- Purge Endpoint (Protected) ---
+
+
+@app.delete("/chunks/purge", response_model=PurgeResponse)
+async def purge_deleted_chunks(
+    request: PurgeRequest,
+    x_auth_key: Optional[str] = Header(None),
+):
+    """Permanently remove deleted chunks older than specified date.
+
+    Protected endpoint - requires X-Auth-Key header.
+    """
+    # Validate auth (use header or request body)
+    auth_key = x_auth_key or request.auth_key
+    if not auth_key or not validate_auth_key(auth_key):
+        return PurgeResponse(chunks_found=0, chunks_removed=0, error="Unauthorized")
+
+    try:
+        collection_name = request.collection
+        if not collection_name:
+            return PurgeResponse(
+                chunks_found=0, chunks_removed=0, error="Collection required"
+            )
+
+        # Get or create collection
+        try:
+            chroma = ChromaDBService()
+            collection = chroma.client.get_collection(name=collection_name)
+        except Exception:
+            return PurgeResponse(
+                chunks_found=0,
+                chunks_removed=0,
+                error=f"Collection '{collection_name}' not found",
+            )
+
+        # Query for deleted chunks
+        results = collection.get(
+            where={"status": {"$eq": "deleted"}}, include=["metadatas"]
+        )
+
+        if not results or not results["ids"]:
+            return PurgeResponse(chunks_found=0, chunks_removed=0)
+
+        # Filter by cutoff date if provided
+        chunks_to_remove = []
+        cutoff_date = None
+        if request.cutoff_date:
+            from datetime import datetime
+
+            try:
+                cutoff_date = datetime.fromisoformat(
+                    request.cutoff_date.replace("Z", "+00:00")
+                )
+            except ValueError:
+                pass
+
+        for i, chunk_id in enumerate(results["ids"]):
+            metadata = results["metadatas"][i] if results["metadatas"] else {}
+            deleted_at_str = metadata.get("deleted_at", "")
+
+            # If cutoff date specified, filter by age
+            if cutoff_date and deleted_at_str:
+                try:
+                    deleted_at = datetime.fromisoformat(
+                        deleted_at_str.replace("Z", "+00:00")
+                    )
+                    if deleted_at > cutoff_date:
+                        continue  # Skip, not old enough
+                except ValueError:
+                    pass  # Include if can't parse date
+
+            chunks_to_remove.append(chunk_id)
+
+        chunks_found = len(chunks_to_remove)
+
+        # Aggregate per-file details for --list output
+        file_info_map = {}  # file_path -> {chunk_count, deleted_at}
+        for i, chunk_id in enumerate(results["ids"]):
+            if chunk_id not in chunks_to_remove:
+                continue
+            metadata = results["metadatas"][i] if results["metadatas"] else {}
+            file_path = metadata.get("file_path", "unknown")
+            deleted_at_str = metadata.get("deleted_at", "")
+
+            if file_path not in file_info_map:
+                file_info_map[file_path] = {
+                    "chunk_count": 0,
+                    "deleted_at": deleted_at_str,
+                }
+            file_info_map[file_path]["chunk_count"] += 1
+
+        # Convert to list of DeletedFileInfo
+        files = [
+            DeletedFileInfo(
+                file_path=fp,
+                chunk_count=info["chunk_count"],
+                deleted_at=info["deleted_at"],
+            )
+            for fp, info in file_info_map.items()
+        ]
+
+        # If dry run, return count and file details
+        if request.dry_run:
+            return PurgeResponse(
+                chunks_found=chunks_found, chunks_removed=0, bytes_freed=0, files=files
+            )
+
+        # Actually delete the chunks
+        if chunks_to_remove:
+            collection.delete(ids=chunks_to_remove)
+
+        return PurgeResponse(
+            chunks_found=chunks_found,
+            chunks_removed=len(chunks_to_remove),
+            bytes_freed=0,  # ChromaDB doesn't report bytes
+            files=files,
+        )
+
+    except Exception as e:
+        return PurgeResponse(chunks_found=0, chunks_removed=0, error=str(e))
+
+
 # --- Query Endpoint (Public) ---
 
 
@@ -391,9 +516,16 @@ async def query(request: QueryRequest):
             else:
                 filter_conditions.append({"language": {"$in": request.languages}})
 
-        # Phase 2C: Exclude deleted chunks by default
-        # Only show active chunks unless explicitly requested otherwise
-        filter_conditions.append({"status": {"$eq": "active"}})
+        # Phase 2C: Handle tombstone mode filters
+        if request.deleted_only:
+            # Show only deleted chunks
+            filter_conditions.append({"status": {"$eq": "deleted"}})
+        elif request.include_deleted:
+            # Include both active and deleted - no status filter
+            pass
+        else:
+            # Default: exclude deleted chunks (only show active)
+            filter_conditions.append({"status": {"$eq": "active"}})
 
         # Handle legacy filters dict (backward compatibility)
         if request.filters:

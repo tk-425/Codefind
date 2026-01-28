@@ -154,6 +154,31 @@ func (ac *APIClient) UpdateChunkStatus(req api.ChunkStatusRequest) (*api.ChunkSt
 	return &statusResp, nil
 }
 
+// PurgeChunks permanently removes deleted chunks older than cutoff date
+func (ac *APIClient) PurgeChunks(req api.PurgeRequest) (*api.PurgeResponse, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	resp, err := ac.deleteWithBody("/chunks/purge", data, true) // true = requires auth
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var purgeResp api.PurgeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&purgeResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if purgeResp.Error != "" {
+		return &purgeResp, fmt.Errorf("server error: %s", purgeResp.Error)
+	}
+
+	return &purgeResp, nil
+}
+
 // post sends a POST request
 func (ac *APIClient) post(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
 	url := ac.baseURL + endpoint
@@ -245,6 +270,35 @@ func (ac *APIClient) delete(endpoint string) (*http.Response, error) {
 	}
 
 	if ac.authKey != "" {
+		req.Header.Set("X-Auth-Key", ac.authKey)
+	}
+
+	resp, err := ac.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	return resp, nil
+}
+
+// deleteWithBody sends a DELETE request with JSON body
+func (ac *APIClient) deleteWithBody(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
+	url := ac.baseURL + endpoint
+
+	req, err := http.NewRequest("DELETE", url, bytes.NewBuffer(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	if requireAuth && ac.authKey != "" {
 		req.Header.Set("X-Auth-Key", ac.authKey)
 	}
 
