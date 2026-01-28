@@ -321,10 +321,14 @@ func handleIndex() {
 	}
 
 	// Create and run indexer
+	if cfg.AuthKey == "" {
+		fmt.Println("Error: Auth key not configured. Set 'auth_key' in ~/.codefind/config.json")
+		os.Exit(1)
+	}
 	indexOpts := indexer.IndexOptions{
 		RepoPath:   repoPath,
 		ServerURL:  cfg.ServerURL,
-		AuthKey:    "secret-key-123", // TODO: Load from config in Phase 3A
+		AuthKey:    cfg.AuthKey,
 		Model:      "unclemusclez/jina-embeddings-v2-base-code:latest",
 		WindowOnly: *windowOnly,
 	}
@@ -369,8 +373,12 @@ func handleCleanup(args []string) {
 	}
 
 	// Create API client and cleanup client
+	if cfg.AuthKey == "" {
+		fmt.Println("Error: Auth key not configured. Set 'auth_key' in ~/.codefind/config.json")
+		os.Exit(1)
+	}
 	apiClient := client.NewAPIClient(cfg.ServerURL)
-	apiClient.SetAuthKey("secret-key-123") // TODO: Load from config in Phase 3A
+	apiClient.SetAuthKey(cfg.AuthKey)
 	cc := cleanup.NewCleanupClient(apiClient)
 
 	// Run cleanup
@@ -425,13 +433,13 @@ func handleStats(args []string) {
 // handleLSP handles the lsp command
 func handleLSP(args []string) {
 	// Parse subcommand
-	subcommand := "check"
+	subcommand := "status"
 	if len(args) > 0 {
 		subcommand = args[0]
 	}
 
 	switch subcommand {
-	case "check":
+	case "status", "check":
 		// Force refresh if --refresh flag
 		forceRefresh := false
 		for _, arg := range args {
@@ -448,6 +456,76 @@ func handleLSP(args []string) {
 		}
 
 		fmt.Println(lsp.FormatLSPStatus(lsps))
+
+	case "test":
+		// Test a specific LSP with end-to-end workflow
+		if len(args) < 2 {
+			fmt.Println("Usage: codefind lsp test <language>")
+			fmt.Println("Example: codefind lsp test go")
+			fmt.Println("\nSupported languages: go, python, typescript/javascript, rust, java, swift, ocaml")
+			os.Exit(1)
+		}
+		language := args[1]
+
+		// Get workspace root
+		workspaceRoot, _ := os.Getwd()
+
+		fmt.Printf("\nTesting %s LSP...\n", language)
+		fmt.Println("──────────────────────────────────────────")
+
+		// Step 1: Check if LSP is available
+		info, ok := lsp.KnownLSPs[language]
+		if !ok {
+			fmt.Printf("❌ Unknown language: %s\n", language)
+			fmt.Println("\nSupported languages: go, python, typescript/javascript, rust, java, swift, ocaml")
+			os.Exit(1)
+		}
+
+		// Step 2: Create LSP client (starts process)
+		startTime := time.Now()
+		client, err := lsp.NewLSPClient(language, workspaceRoot)
+		if err != nil {
+			fmt.Printf("❌ Process start failed: %v\n", err)
+			fmt.Printf("\nDiagnostics:\n")
+			fmt.Printf("  • Executable: %s\n", info.Executable)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Process started successfully (%.2fs)\n", time.Since(startTime).Seconds())
+
+		// Step 3: Initialize LSP
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		initStart := time.Now()
+		if err := client.Initialize(ctx); err != nil {
+			fmt.Printf("❌ Initialize failed: %v\n", err)
+			client.Shutdown(ctx)
+			os.Exit(1)
+		}
+		fmt.Printf("✅ Initialize completed (%.2fs)\n", time.Since(initStart).Seconds())
+
+		// Step 4: Test document symbols (create a sample file or use existing)
+		// Find a sample file to test with
+		sampleFile := findSampleFile(workspaceRoot, language)
+		if sampleFile != "" {
+			symbolStart := time.Now()
+			symbols, err := client.DocumentSymbols(ctx, sampleFile)
+			if err != nil {
+				fmt.Printf("⚠️  Document symbols failed: %v\n", err)
+			} else {
+				fmt.Printf("✅ Document symbols extracted (%.2fs) - %d symbols from %s\n",
+					time.Since(symbolStart).Seconds(), len(symbols), filepath.Base(sampleFile))
+			}
+		} else {
+			fmt.Printf("⚠️  No sample file found for %s (skipping symbol test)\n", language)
+		}
+
+		// Step 5: Shutdown
+		shutdownStart := time.Now()
+		client.Shutdown(ctx)
+		fmt.Printf("✅ Shutdown completed (%.2fs)\n", time.Since(shutdownStart).Seconds())
+
+		fmt.Printf("\n%s (%s) is working correctly\n", info.Name, info.Executable)
 
 	case "symbols":
 		// Extract symbols from a file
@@ -638,12 +716,47 @@ func handleLSP(args []string) {
 	default:
 		fmt.Printf("Unknown lsp subcommand: %s\n", subcommand)
 		fmt.Println("Usage:")
-		fmt.Println("  codefind lsp check [--refresh]       - Check available LSP servers")
-		fmt.Println("  codefind lsp symbols <lang> <file>   - Extract symbols from file")
-		fmt.Println("  codefind lsp chunks <lang> <file>    - Chunk file using symbols")
+		fmt.Println("  codefind lsp status [--refresh]         - Check available LSP servers")
+		fmt.Println("  codefind lsp test <language>            - Test LSP end-to-end")
+		fmt.Println("  codefind lsp symbols <lang> <file>      - Extract symbols from file")
+		fmt.Println("  codefind lsp chunks <lang> <file>       - Chunk file using symbols")
 		fmt.Println("  codefind lsp hybrid <file> [--window-only] - Test hybrid chunking")
 		os.Exit(1)
 	}
+}
+
+// findSampleFile finds a sample source file for testing LSP
+func findSampleFile(root, language string) string {
+	extMap := map[string][]string{
+		"go":                    {".go"},
+		"python":                {".py"},
+		"typescript/javascript": {".ts", ".tsx", ".js", ".jsx"},
+		"rust":                  {".rs"},
+		"java":                  {".java"},
+		"swift":                 {".swift"},
+		"ocaml":                 {".ml", ".mli"},
+	}
+
+	exts, ok := extMap[language]
+	if !ok {
+		return ""
+	}
+
+	// Walk directory to find first matching file
+	var result string
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		for _, ext := range exts {
+			if strings.HasSuffix(path, ext) {
+				result = path
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	return result
 }
 
 // printSymbols recursively prints document symbols with indentation
@@ -1033,8 +1146,12 @@ func handleClear(repoPath string) {
 	}
 
 	// Call server to delete collection
+	if globalCfg.AuthKey == "" {
+		fmt.Println("Error: Auth key not configured. Set 'auth_key' in ~/.codefind/config.json")
+		os.Exit(1)
+	}
 	apiClient := client.NewAPIClient(globalCfg.ServerURL)
-	apiClient.SetAuthKey("secret-key-123") // TODO: Load from config in Phase 3A
+	apiClient.SetAuthKey(globalCfg.AuthKey)
 
 	err = apiClient.ClearCollection(manifest.RepoID)
 	if err != nil {
