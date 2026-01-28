@@ -289,7 +289,7 @@ async def update_chunk_status(
         # 3. Re-add with updated metadata
 
         updated_count = 0
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         for file_path in request.file_paths:
             # Query for chunks from this file
@@ -306,7 +306,8 @@ async def update_chunk_status(
                 metadata = results["metadatas"][i]
                 metadata["status"] = request.status
                 if request.status == "deleted":
-                    metadata["deleted_at"] = now.isoformat()
+                    # Use ISO format with Z suffix for RFC3339 compatibility
+                    metadata["deleted_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
                     if request.deleted_in_commit:
                         metadata["deleted_in_commit"] = request.deleted_in_commit
                 else:
