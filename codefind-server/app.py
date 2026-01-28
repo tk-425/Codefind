@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from datetime import datetime, timezone
 import requests
 import uuid
@@ -34,6 +34,8 @@ from auth import (
 )
 from services.chromadb_service import ChromaDBService
 from services.ollama_service import OllamaService
+from audit import get_audit_logger
+from ratelimit import get_rate_limiter, get_bootstrap_guard
 
 # Load environment variables
 load_dotenv()
@@ -131,6 +133,7 @@ async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header
 
     # Step 1: Authenticate
     if not x_auth_key or not validate_auth_key(x_auth_key):
+        get_audit_logger().log_auth_fail(endpoint="/index")
         raise HTTPException(status_code=401, detail="Invalid auth key")
 
     # Step 2: Validate ChromaDB connection
@@ -173,6 +176,14 @@ async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header
             ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas
         )
 
+        # Audit log the index operation
+        get_audit_logger().log_index(
+            repo=request.collection,
+            files=len(set(chunk.metadata.file_path for chunk in request.chunks)),
+            chunks=len(ids),
+            method="hybrid",
+        )
+
         return IndexResponse(inserted_count=len(ids), updated_count=0, error="")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Storage error: {e}")
@@ -194,6 +205,7 @@ async def soft_delete_chunks(
     """
     # Validate auth
     if not x_auth_key or not validate_auth_key(x_auth_key):
+        get_audit_logger().log_auth_fail(endpoint="/chunks/delete")
         raise HTTPException(
             status_code=401,
             detail="Invalid or missing auth key",
@@ -222,6 +234,11 @@ async def soft_delete_chunks(
                     )
                     deleted_count += 1
 
+        # Audit log the delete operation
+        get_audit_logger().log_delete(
+            repo=repo_id, files=len(file_paths), chunks=deleted_count
+        )
+
         return {"deleted_count": deleted_count, "file_paths": file_paths}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Delete error: {e}")
@@ -242,6 +259,7 @@ async def clear_collection(
     """
     # Validate auth
     if not x_auth_key or not validate_auth_key(x_auth_key):
+        get_audit_logger().log_auth_fail(endpoint="/clear")
         raise HTTPException(
             status_code=401,
             detail="Invalid or missing auth key",
@@ -254,6 +272,7 @@ async def clear_collection(
         if repo_id in collection_names:
             # Delete the entire collection
             chroma.client.delete_collection(repo_id)
+            get_audit_logger().log_clear(repo=repo_id)
             return {"status": "deleted", "repo_id": repo_id}
         else:
             # Collection doesn't exist - treat as success (already cleared)
@@ -282,6 +301,7 @@ async def update_chunk_status(
     # Validate auth (use header or request body)
     auth_key = x_auth_key or request.auth_key
     if not auth_key or not validate_auth_key(auth_key):
+        get_audit_logger().log_auth_fail(endpoint="/chunks/status")
         raise HTTPException(status_code=401, detail="Invalid or missing auth key")
 
     try:
@@ -352,6 +372,7 @@ async def purge_deleted_chunks(
     # Validate auth (use header or request body)
     auth_key = x_auth_key or request.auth_key
     if not auth_key or not validate_auth_key(auth_key):
+        get_audit_logger().log_auth_fail(endpoint="/chunks/purge")
         return PurgeResponse(chunks_found=0, chunks_removed=0, error="Unauthorized")
 
     try:
@@ -447,6 +468,10 @@ async def purge_deleted_chunks(
         # Actually delete the chunks
         if chunks_to_remove:
             collection.delete(ids=chunks_to_remove)
+            # Audit log the purge operation
+            get_audit_logger().log_cleanup(
+                repo=collection_name, purged=len(chunks_to_remove)
+            )
 
         return PurgeResponse(
             chunks_found=chunks_found,
@@ -710,8 +735,15 @@ async def query(request: QueryRequest):
 
 
 @app.post("/admin/bootstrap")
-async def bootstrap(email: str, auth_key: str):
+async def bootstrap(email: str, auth_key: str, request: Request):
     """Create first manager (one-time only)."""
+    # Check if already bootstrapped
+    guard = get_bootstrap_guard()
+    if guard.is_bootstrapped():
+        raise HTTPException(
+            status_code=403, detail="Bootstrap already completed - endpoint disabled"
+        )
+
     success = create_first_manager(email, auth_key)
 
     if not success:
@@ -719,14 +751,30 @@ async def bootstrap(email: str, auth_key: str):
             status_code=400, detail="Bootstrap failed - managers already exist"
         )
 
+    # Mark as bootstrapped
+    guard.mark_bootstrapped()
+
+    client_ip = request.client.host if request.client else "unknown"
+    get_audit_logger().log_bootstrap(email=email, ip=client_ip)
     return {"status": "ok", "message": f"First manager {email} created"}
 
 
 @app.post("/admin/add")
-async def add_admin(email: str, x_auth_key: Optional[str] = Header(None)):
+async def add_admin(
+    email: str, request: Request, x_auth_key: Optional[str] = Header(None)
+):
     """Add new manager (requires auth)."""
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limiter = get_rate_limiter()
+
+    # Check rate limit
+    if rate_limiter.check_auth_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429, detail="Too many auth failures. Try again later."
+        )
 
     if not x_auth_key or not validate_auth_key(x_auth_key):
+        rate_limiter.record_auth_failure(client_ip, "/admin/add")
         raise HTTPException(status_code=401, detail="Invalid auth key")
 
     # TODO: Generate new auth key and return to caller
@@ -735,14 +783,24 @@ async def add_admin(email: str, x_auth_key: Optional[str] = Header(None)):
     if not success:
         raise HTTPException(status_code=400, detail="Manager already exists")
 
+    get_audit_logger().log_admin_add(email=email)
     return {"status": "ok", "message": f"Manager {email} added"}
 
 
 @app.get("/admin/list")
-async def list_admins(x_auth_key: Optional[str] = Header(None)):
+async def list_admins(request: Request, x_auth_key: Optional[str] = Header(None)):
     """List all managers (requires auth)."""
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limiter = get_rate_limiter()
+
+    # Check rate limit
+    if rate_limiter.check_auth_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429, detail="Too many auth failures. Try again later."
+        )
 
     if not x_auth_key or not validate_auth_key(x_auth_key):
+        rate_limiter.record_auth_failure(client_ip, "/admin/list")
         raise HTTPException(status_code=401, detail="Invalid auth key")
 
     managers = list_managers()
@@ -750,10 +808,21 @@ async def list_admins(x_auth_key: Optional[str] = Header(None)):
 
 
 @app.delete("/admin/{email}")
-async def remove_admin(email: str, x_auth_key: Optional[str] = Header(None)):
+async def remove_admin(
+    email: str, request: Request, x_auth_key: Optional[str] = Header(None)
+):
     """Remove manager (requires auth)."""
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limiter = get_rate_limiter()
+
+    # Check rate limit
+    if rate_limiter.check_auth_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429, detail="Too many auth failures. Try again later."
+        )
 
     if not x_auth_key or not validate_auth_key(x_auth_key):
+        rate_limiter.record_auth_failure(client_ip, "/admin/remove")
         raise HTTPException(status_code=401, detail="Invalid auth key")
 
     success = remove_manager(email)
@@ -761,6 +830,7 @@ async def remove_admin(email: str, x_auth_key: Optional[str] = Header(None)):
     if not success:
         raise HTTPException(status_code=404, detail="Manager not found")
 
+    get_audit_logger().log_admin_remove(email=email)
     return {"status": "ok", "message": f"Manager {email} removed"}
 
 

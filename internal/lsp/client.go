@@ -310,6 +310,19 @@ func (c *LSPClient) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// IsAlive checks if the LSP process is still running
+func (c *LSPClient) IsAlive() bool {
+	if c.cmd == nil || c.cmd.Process == nil {
+		return false
+	}
+	// Check if process has exited
+	// On Unix, Process.Signal(os.Signal(0)) returns nil if process exists
+	// On all platforms, we can check ProcessState after Wait
+	// A simple approach: try to get process state without blocking
+	// If cmd.ProcessState is set, process has exited
+	return c.cmd.ProcessState == nil
+}
+
 // DocumentSymbols requests document symbols for a file
 func (c *LSPClient) DocumentSymbols(ctx context.Context, filePath string) ([]DocumentSymbol, error) {
 	// Read file content

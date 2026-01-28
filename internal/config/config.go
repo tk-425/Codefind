@@ -11,6 +11,7 @@ import (
 type GlobalConfig struct {
 	ServerURL string `json:"server_url"`
 	Editor    string `json:"editor"`
+	AuthKey   string `json:"auth_key,omitempty"`
 }
 
 // RepositoryManifest represents per-repository metadata
