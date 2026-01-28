@@ -103,6 +103,15 @@ class PurgeResponse(BaseModel):
     error: Optional[str] = None
 
 
+# Stats
+class StatsResponse(BaseModel):
+    active_chunks: int
+    deleted_chunks: int
+    total_chunks: int
+    overhead_percent: float
+    error: Optional[str] = None
+
+
 # Query
 class QueryRequest(BaseModel):
     query: str

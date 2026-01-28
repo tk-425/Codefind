@@ -19,6 +19,7 @@ import (
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/indexer"
 	"github.com/tk-425/Codefind/internal/query"
+	"github.com/tk-425/Codefind/internal/stats"
 	"github.com/tk-425/Codefind/pkg/api"
 )
 
@@ -51,6 +52,8 @@ func main() {
 			os.Exit(1)
 		}
 		handleOpen(os.Args[2])
+	case "stats":
+		handleStats(os.Args[2:])
 	case "cleanup":
 		handleCleanup(os.Args[2:])
 	case "clear":
@@ -347,6 +350,44 @@ func handleCleanup(args []string) {
 
 	// Display result
 	fmt.Println(cleanup.FormatResult(result, opts.ListOnly))
+}
+
+// handleStats handles the stats command
+func handleStats(args []string) {
+	// Load global config
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Printf("Error: Not initialized. Run 'codefind init' first.\n")
+		os.Exit(1)
+	}
+
+	// Get repo ID for current directory
+	absPath, err := filepath.Abs(".")
+	if err != nil {
+		fmt.Printf("Error: cannot determine current directory: %v\n", err)
+		os.Exit(1)
+	}
+	repoID := indexer.GenerateRepoID(absPath)
+
+	// Try to get project name from manifest
+	projectName := "Unknown"
+	if manifest, err := config.LoadManifest(repoID); err == nil {
+		projectName = manifest.ProjectName
+	}
+
+	// Create API client and stats client
+	apiClient := client.NewAPIClient(cfg.ServerURL)
+	sc := stats.NewStatsClient(apiClient)
+
+	// Get stats
+	statsResp, err := sc.GetStats(repoID)
+	if err != nil {
+		fmt.Printf("Failed to get stats: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display formatted stats
+	fmt.Println(stats.FormatStats(projectName, statsResp))
 }
 
 // savedResult stores query results for 'codefind open' command

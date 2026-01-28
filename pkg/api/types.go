@@ -134,6 +134,16 @@ type DeletedFileInfo struct {
 	DeletedAt  string `json:"deleted_at"` // RFC3339 format
 }
 
+// --- Stats Endpoint ---
+
+type StatsResponse struct {
+	ActiveChunks    int     `json:"active_chunks"`
+	DeletedChunks   int     `json:"deleted_chunks"`
+	TotalChunks     int     `json:"total_chunks"`
+	OverheadPercent float64 `json:"overhead_percent"`
+	Error           string  `json:"error,omitempty"`
+}
+
 // --- Query Endpoint ---
 
 type QueryRequest struct {

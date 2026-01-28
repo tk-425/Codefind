@@ -19,6 +19,7 @@ from models import (
     PurgeRequest,
     PurgeResponse,
     DeletedFileInfo,
+    StatsResponse,
     QueryRequest,
     QueryResponse,
     QueryResult,
@@ -454,6 +455,63 @@ async def purge_deleted_chunks(
 
     except Exception as e:
         return PurgeResponse(chunks_found=0, chunks_removed=0, error=str(e))
+
+
+# --- Stats Endpoint (Public) ---
+
+
+@app.get("/stats/{collection_name}", response_model=StatsResponse)
+async def get_collection_stats(collection_name: str):
+    """Get statistics for a collection.
+
+    Public endpoint - no authentication required.
+    """
+    try:
+        chroma = ChromaDBService()
+        try:
+            collection = chroma.client.get_collection(name=collection_name)
+        except Exception:
+            return StatsResponse(
+                active_chunks=0,
+                deleted_chunks=0,
+                total_chunks=0,
+                overhead_percent=0.0,
+                error=f"Collection '{collection_name}' not found",
+            )
+
+        # Get all chunks and count by status
+        results = collection.get(include=["metadatas"])
+
+        active_count = 0
+        deleted_count = 0
+
+        if results and results["ids"]:
+            for i, _ in enumerate(results["ids"]):
+                metadata = results["metadatas"][i] if results["metadatas"] else {}
+                status = metadata.get("status", "active")
+                if status == "deleted":
+                    deleted_count += 1
+                else:
+                    active_count += 1
+
+        total = active_count + deleted_count
+        overhead = (deleted_count / total * 100) if total > 0 else 0.0
+
+        return StatsResponse(
+            active_chunks=active_count,
+            deleted_chunks=deleted_count,
+            total_chunks=total,
+            overhead_percent=round(overhead, 1),
+        )
+
+    except Exception as e:
+        return StatsResponse(
+            active_chunks=0,
+            deleted_chunks=0,
+            total_chunks=0,
+            overhead_percent=0.0,
+            error=str(e),
+        )
 
 
 # --- Query Endpoint (Public) ---

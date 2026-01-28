@@ -179,6 +179,26 @@ func (ac *APIClient) PurgeChunks(req api.PurgeRequest) (*api.PurgeResponse, erro
 	return &purgeResp, nil
 }
 
+// GetStats retrieves statistics for a collection
+func (ac *APIClient) GetStats(collection string) (*api.StatsResponse, error) {
+	resp, err := ac.get("/stats/" + collection)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var statsResp api.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statsResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if statsResp.Error != "" {
+		return &statsResp, fmt.Errorf("server error: %s", statsResp.Error)
+	}
+
+	return &statsResp, nil
+}
+
 // post sends a POST request
 func (ac *APIClient) post(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
 	url := ac.baseURL + endpoint
