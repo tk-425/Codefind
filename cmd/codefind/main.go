@@ -28,6 +28,8 @@ import (
 	"golang.org/x/term"
 )
 
+const Version = "0.1.0"
+
 func main() {
 	// Define subcommands
 	if len(os.Args) < 2 {
@@ -87,6 +89,8 @@ func main() {
 			fmt.Printf("Unknown auth command: %s\n", os.Args[2])
 			os.Exit(1)
 		}
+	case "version", "-v", "--version":
+		fmt.Printf("codefind v%s\n", Version)
 	case "help", "-h", "--help", "":
 		printUsage()
 	default:

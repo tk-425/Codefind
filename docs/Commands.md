@@ -42,6 +42,7 @@ codefind index [options]
 | Option | Description |
 |--------|-------------|
 | `--window-only` | Use window-based chunking only (skip LSP) |
+| `--concurrency=N` | Number of concurrent batch requests (default: 2, max: 8) |
 
 **What it does:**
 
@@ -56,16 +57,16 @@ codefind index [options]
 $ cd ~/projects/my-app
 $ codefind index
 
-Indexing my-app...
-Using hybrid chunking (LSP + window fallback)
-✓ gopls available for Go files
-✗ pyright not found, using window chunking for Python
+📦 Chunking mode: Hybrid (LSP when available)
+🔀 Concurrency: 2 parallel requests
+✓ Found 42 files
+📤 Sending chunks to server (parallel)...
+  Progress: 20/20 batches ✓ (100%)
+✅ Indexing complete!
 
-Found 42 files to index
-Chunking files... done (156 chunks)
-Indexing... done
-
-✅ Indexed 42 files (156 chunks) in 12.3s
+# With custom concurrency
+$ codefind index --concurrency=4   # Higher for powerful servers
+$ codefind index --concurrency=1   # Serial mode for weak servers
 ```
 
 **Tips:**
@@ -73,6 +74,7 @@ Indexing... done
 - Run from project root directory
 - Re-run after code changes (incremental update)
 - Use `--window-only` if LSP is causing issues
+- Adjust `--concurrency` based on your server capacity
 
 ---
 
