@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tk-425/Codefind/internal/chunker"
@@ -16,11 +17,12 @@ import (
 
 // IndexOptions contains options for indexing
 type IndexOptions struct {
-	RepoPath   string // Repository path
-	ServerURL  string // Server URL for API calls
-	AuthKey    string // Authentication key
-	Model      string // Embedding model name
-	WindowOnly bool   // Force window-based chunking (skip LSP)
+	RepoPath    string // Repository path
+	ServerURL   string // Server URL for API calls
+	AuthKey     string // Authentication key
+	Model       string // Embedding model name
+	WindowOnly  bool   // Force window-based chunking (skip LSP)
+	Concurrency int    // Number of concurrent batch requests (default: 2)
 }
 
 // Indexer orchestrates the indexing pipeline
@@ -274,33 +276,16 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 	return idx.sendChunksInBatches(allChunks)
 }
 
-// sendChunksInBatches sends chunks to server with retry logic
+// sendChunksInBatches sends chunks to server using parallel batching
 func (idx *Indexer) sendChunksInBatches(allChunks []api.Chunk) error {
-	const batchSize = 8
-	const maxRetries = 3
-	totalInserted := 0
-	totalBatches := (len(allChunks) + batchSize - 1) / batchSize
+	fmt.Println("📤 Sending chunks (parallel)...")
 
-	for i := 0; i < len(allChunks); i += batchSize {
-		end := min(i+batchSize, len(allChunks))
-		batch := allChunks[i:end]
-		batchNum := (i / batchSize) + 1
-
-		fmt.Printf("  Batch %d/%d: %d chunks", batchNum, totalBatches, len(batch))
-
-		err := idx.sendBatchWithRetry(batch, maxRetries)
-		if err != nil {
-			fmt.Printf(" ❌\n")
-			return fmt.Errorf("batch %d failed: %w", batchNum, err)
-		}
-
-		totalInserted += len(batch)
-		progress := float64(totalInserted) / float64(len(allChunks)) * 100
-		fmt.Printf(" ✓ (%.0f%%)\n", progress)
+	if err := idx.sendChunksParallel(allChunks); err != nil {
+		return err
 	}
 
-	idx.manifest.ActiveChunkCount += totalInserted
-	fmt.Printf("✓ Indexed %d chunks\n", totalInserted)
+	idx.manifest.ActiveChunkCount += len(allChunks)
+	fmt.Printf("✓ Indexed %d chunks\n", len(allChunks))
 	return nil
 }
 
@@ -392,48 +377,21 @@ func (idx *Indexer) fullIndex() error {
 
 	fmt.Printf("✓ Total chunks to index: %d\n", len(allChunks))
 
-	// Send chunks to server in batches with retry logic
-	fmt.Println("📤 Sending chunks to server...")
-	const batchSize = 8 // Reduced from 16 for faster embedding on CPU
-	const maxRetries = 3
-	totalInserted := 0
-	totalBatches := (len(allChunks) + batchSize - 1) / batchSize
-
-	for i := 0; i < len(allChunks); i += batchSize {
-		end := min(i+batchSize, len(allChunks))
-		batch := allChunks[i:end]
-		batchNum := (i / batchSize) + 1
-
-		// Progress indicator
-		fmt.Printf("  Batch %d/%d: %d chunks", batchNum, totalBatches, len(batch))
-
-		// Send with retry logic
-		err := idx.sendBatchWithRetry(batch, maxRetries)
-		if err != nil {
-			fmt.Printf(" ❌\n")
-
-			// Check if we should save partial progress
-			if isNetworkError(err) {
-				fmt.Printf("\n⚠️  Network error detected. Saving partial progress...\n")
-				idx.manifest.ActiveChunkCount = totalInserted
-				if saveErr := config.SaveManifest(idx.manifest); saveErr != nil {
-					return fmt.Errorf("failed to save partial progress: %w", saveErr)
-				}
-				fmt.Printf("✓ Saved %d/%d chunks to manifest\n\n", totalInserted, len(allChunks))
-				return fmt.Errorf("indexing paused due to network error: %w", err)
+	// Send chunks to server in parallel batches
+	fmt.Println("📤 Sending chunks to server (parallel)...")
+	if err := idx.sendChunksParallel(allChunks); err != nil {
+		// On error, try to save partial progress
+		if isNetworkError(err) {
+			fmt.Printf("\n⚠️  Network error detected. Saving partial progress...\n")
+			if saveErr := config.SaveManifest(idx.manifest); saveErr != nil {
+				return fmt.Errorf("failed to save partial progress: %w", saveErr)
 			}
-
-			return fmt.Errorf("batch %d failed: %w", batchNum, err)
+			return fmt.Errorf("indexing paused due to network error: %w", err)
 		}
-
-		totalInserted += len(batch)
-
-		// Progress percentage
-		progress := float64(totalInserted) / float64(len(allChunks)) * 100
-		fmt.Printf(" ✓ (%.0f%%)\n", progress)
+		return err
 	}
 
-	fmt.Printf("\n✅ All chunks sent successfully!\n")
+	fmt.Printf("✅ All chunks sent successfully!\n")
 
 	// Update manifest
 	fmt.Println("💾 Updating manifest...")
@@ -477,7 +435,7 @@ func (idx *Indexer) fullIndex() error {
 
 	// Success
 	fmt.Printf("\n✅ Indexing complete!\n")
-	fmt.Printf("   Total chunks: %d\n", totalInserted)
+	fmt.Printf("   Total chunks: %d\n", len(allChunks))
 	fmt.Printf("   Indexed at: %s\n", idx.manifest.IndexedAt)
 
 	return nil
@@ -551,18 +509,101 @@ func (idx *Indexer) sendBatchWithRetry(batch []api.Chunk, maxRetries int) error 
 	return nil
 }
 
+// splitIntoBatches divides chunks into batches of specified size
+func splitIntoBatches(chunks []api.Chunk, batchSize int) [][]api.Chunk {
+	var batches [][]api.Chunk
+	for i := 0; i < len(chunks); i += batchSize {
+		end := min(i+batchSize, len(chunks))
+		batches = append(batches, chunks[i:end])
+	}
+	return batches
+}
+
+// sendChunksParallel sends chunks to server with concurrent goroutines
+func (idx *Indexer) sendChunksParallel(allChunks []api.Chunk) error {
+	const batchSize = 8  // Smaller batches for stability
+	const maxRetries = 3
+
+	// Use configured concurrency or default to 2
+	maxConcurrent := idx.options.Concurrency
+	if maxConcurrent <= 0 {
+		maxConcurrent = 2
+	}
+
+	batches := splitIntoBatches(allChunks, batchSize)
+	totalBatches := len(batches)
+
+	if totalBatches == 0 {
+		return nil
+	}
+
+	// Track errors from goroutines
+	errChan := make(chan error, totalBatches)
+	sem := make(chan struct{}, maxConcurrent) // Semaphore for concurrency limit
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	completed := 0
+	var firstErr error
+
+	for i, batch := range batches {
+		wg.Add(1)
+		go func(batchNum int, b []api.Chunk) {
+			defer wg.Done()
+
+			sem <- struct{}{}        // Acquire semaphore
+			defer func() { <-sem }() // Release semaphore
+
+			err := idx.sendBatchWithRetry(b, maxRetries)
+
+			mu.Lock()
+			completed++
+			progress := float64(completed) / float64(totalBatches) * 100
+			if err != nil {
+				fmt.Printf("\r  Batch %d/%d ❌ Error: %v\n", batchNum, totalBatches, err)
+			} else {
+				fmt.Printf("\r  Progress: %d/%d batches ✓ (%.0f%%)          ", completed, totalBatches, progress)
+			}
+			mu.Unlock()
+
+			errChan <- err
+		}(i+1, batch)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(errChan)
+
+	// Check for errors
+	for err := range errChan {
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	// Print newline after progress
+	fmt.Println()
+
+	if firstErr != nil {
+		return fmt.Errorf("batch failed: %w", firstErr)
+	}
+
+	return nil
+}
+
 // isRetryableError determines if an error should trigger a retry
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	errStr := err.Error()
+	errStr := strings.ToLower(err.Error())
 
-	// Network-related errors
+	// Network-related errors (case-insensitive)
 	if strings.Contains(errStr, "connection refused") ||
 		strings.Contains(errStr, "connection reset") ||
 		strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "deadline exceeded") ||
 		strings.Contains(errStr, "no such host") ||
 		strings.Contains(errStr, "network unreachable") ||
 		strings.Contains(errStr, "dial tcp") {

@@ -288,9 +288,13 @@ func handleChunkFile() {
 }
 
 func handleIndex() {
+	// Start timer
+	startTime := time.Now()
+
 	// Parse flags
 	indexCmd := flag.NewFlagSet("index", flag.ExitOnError)
 	windowOnly := indexCmd.Bool("window-only", false, "Force window-based chunking (skip LSP)")
+	concurrency := indexCmd.Int("concurrency", 2, "Number of concurrent batch requests (default: 2)")
 	
 	// Find where flags start (after "index" and optional path)
 	args := os.Args[2:] // Skip "codefind" and "index"
@@ -340,6 +344,7 @@ func handleIndex() {
 	} else {
 		fmt.Println("📦 Chunking mode: Hybrid (LSP when available)")
 	}
+	fmt.Printf("🔀 Concurrency: %d parallel requests\n", *concurrency)
 
 	// Create and run indexer
 	authKey, err := config.GetAuthKey()
@@ -348,11 +353,12 @@ func handleIndex() {
 		os.Exit(1)
 	}
 	indexOpts := indexer.IndexOptions{
-		RepoPath:   repoPath,
-		ServerURL:  cfg.ServerURL,
-		AuthKey:    authKey,
-		Model:      "unclemusclez/jina-embeddings-v2-base-code:latest",
-		WindowOnly: *windowOnly,
+		RepoPath:    repoPath,
+		ServerURL:   cfg.ServerURL,
+		AuthKey:     authKey,
+		Model:       "unclemusclez/jina-embeddings-v2-base-code:latest",
+		WindowOnly:  *windowOnly,
+		Concurrency: *concurrency,
 	}
 
 	idx := indexer.NewIndexer(indexOpts)
@@ -360,6 +366,10 @@ func handleIndex() {
 		fmt.Printf("Indexing failed: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Print duration
+	duration := time.Since(startTime)
+	fmt.Printf("\n⏱️  Total time: %.1fs\n", duration.Seconds())
 }
 
 // handleCleanup handles the cleanup command for purging old deleted chunks

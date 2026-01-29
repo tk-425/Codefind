@@ -1,3 +1,8 @@
+---
+name: codefind-list-projects
+description: List and manage indexed code repositories. Use when you need to view all indexed projects, verify a project has been indexed, check index freshness, or find project names for query filtering.
+---
+
 # codefind-list-projects
 
 List and manage indexed code repositories.
@@ -150,72 +155,15 @@ codefind list
 
 ## Project Information Details
 
-### Project Name
+For detailed explanations of all fields (project name, path, timestamp, commit hash, file count, chunk count, and summary line), see [field-reference.md](field-reference.md).
 
-**How it's determined:**
-- Extracted from repository directory name
-- Example: `/Users/you/projects/Code-Search` → `Code-Search`
-- Example: `/home/user/my-api-gateway` → `my-api-gateway`
-
-**Used in:**
-- `--project` flag for queries
-- Display in search results
-- Project identification
-
-### Path
-
-**Absolute path to repository:**
-- Shows where the code is located
-- Useful for knowing which directory to `cd` into
-- Helps identify duplicate indexes of same code
-
-### Last Indexed Timestamp
-
-**When the project was last indexed:**
-- Shows date and time of last `codefind index` run
-- Format: `YYYY-MM-DD HH:MM:SS`
-
-**Indicates:**
-- How fresh the index is
-- Whether recent changes are searchable
-- When to run incremental update
-
-### Commit Hash (Git Repos)
-
-**Last indexed git commit:**
-- Shows which commit was indexed
-- Format: Short SHA (first 12 characters)
-- Example: `abc123def456`
-
-**Use to:**
-- Verify index is up-to-date with current branch
-- Understand which version of code is indexed
-- Detect if re-indexing is needed
-
-**Note:** Non-git repos won't show commit hash
-
-### File Count
-
-**Number of indexed files:**
-- Includes only code files (filtered by .gitignore)
-- Excludes build artifacts, dependencies, etc.
-
-**Typical counts:**
-- Small project: 10-50 files
-- Medium project: 100-500 files
-- Large project: 1000+ files
-
-### Chunk Count
-
-**Total number of code chunks:**
-- Each chunk is a searchable unit
-- LSP-based: Usually aligned with functions/classes
-- Window-based: Fixed-size overlapping windows
-
-**Typical ratios:**
-- LSP chunking: ~5-15 chunks per file
-- Window chunking: ~10-30 chunks per file
-- Depends on file size and complexity
+**Quick field summary:**
+- **Project Name**: Derived from directory name, used in `--project` flag
+- **Path**: Absolute path to repository
+- **Indexed**: Last indexing timestamp (YYYY-MM-DD HH:MM:SS)
+- **Commit**: Git commit hash (12 chars, git repos only)
+- **Files**: Number of indexed code files
+- **Chunks**: Total searchable chunks (LSP: ~5-15/file, Window: ~10-30/file)
 
 ## Advanced Usage
 
@@ -474,48 +422,23 @@ codefind list
 
 ## Output Formats
 
-### Standard Format (Human-Readable)
+For detailed information about output formats, parsing strategies, and automation examples, see [output-formats.md](output-formats.md).
 
-```
-Indexed Projects:
+**Available formats:**
+- **Standard** (default): Human-readable, visual scanning
+- **JSON** (`--json`): Machine-parseable, automation-friendly
 
-1. ProjectName
-   Path: /full/path/to/project
-   Indexed: 2026-01-28 10:30:00
-   Commit: abc123def456
-   Files: 14
-   Chunks: 130
-```
-
-### JSON Format (if implemented)
-
+**Quick parsing examples:**
 ```bash
-codefind list --json
-```
+# Standard: Extract project names
+codefind list | grep -E "^[0-9]+\." | sed 's/^[0-9]*\. //'
 
-**Output:**
-```json
-{
-  "projects": [
-    {
-      "name": "Code-Search",
-      "path": "/Users/you/projects/Code-Search",
-      "indexed_at": "2026-01-28T10:30:00Z",
-      "commit": "abc123def456",
-      "file_count": 14,
-      "chunk_count": 130
-    }
-  ],
-  "total_projects": 1,
-  "total_files": 14,
-  "total_chunks": 130
-}
-```
+# JSON: Extract project names
+codefind list --json | jq -r '.projects[].name'
 
-**Use for:**
-- Programmatic parsing
-- Integration with scripts
-- Automated workflows
+# JSON: Find stale projects
+codefind list --json | jq '.projects[] | select(.indexed_at < "2026-01-20")'
+```
 
 ## Related Skills
 

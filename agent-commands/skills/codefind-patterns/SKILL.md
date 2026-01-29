@@ -1,3 +1,8 @@
+---
+name: codefind-patterns
+description: Analyze code patterns across indexed projects to understand architectural decisions and recurring implementations. Use when you need to find error handling patterns, authentication implementations, API endpoint definitions, or understand how libraries are used across codebases.
+---
+
 # codefind-patterns
 
 Analyze code patterns across indexed projects to understand architectural decisions and recurring implementations.

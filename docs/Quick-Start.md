@@ -80,6 +80,12 @@ codefind query "api endpoints" --lang=go
 codefind list
 ```
 
+### Remove Indexed Project
+
+```bash
+codefind clear  # Remove current project
+```
+
 ## Common Workflows
 
 ### Find a Function
@@ -102,6 +108,6 @@ codefind index  # Incremental update
 
 ## Next Steps
 
-- [CLI Commands Reference](./CLI-COMMANDS-AND-WORKFLOW.md)
+- [CLI Commands Reference](./Commands.md)
 - [Troubleshooting Guide](./Troubleshooting.md)
 - [Configuration Options](./Configuration.md)

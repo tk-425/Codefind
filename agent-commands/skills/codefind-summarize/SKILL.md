@@ -1,3 +1,8 @@
+---
+name: codefind-summarize
+description: Generate summaries and documentation from indexed code using semantic search. Use when you need to understand what code does, generate documentation, explain component relationships, document API endpoints, or create architecture documentation.
+---
+
 # codefind-summarize
 
 Generate summaries and documentation from indexed code using semantic search.
