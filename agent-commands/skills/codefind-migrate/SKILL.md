@@ -1,3 +1,8 @@
+---
+name: codefind-migrate
+description: Assist with code migration tasks by finding similar implementations and suggesting migration strategies. Use when you need to migrate code between projects, upgrade libraries/frameworks, refactor patterns, port implementations to different languages, or replace deprecated APIs.
+---
+
 # codefind-migrate
 
 Assist with code migration tasks by finding similar implementations and suggesting migration strategies.

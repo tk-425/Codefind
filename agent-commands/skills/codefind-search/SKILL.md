@@ -1,3 +1,8 @@
+---
+name: codefind-search
+description: Search codebase semantically using natural language queries. Use when you need to find implementations of specific features, locate code handling particular operations, discover patterns across projects, or find examples of how libraries are used.
+---
+
 # codefind-search
 
 Search codebase semantically using natural language queries.

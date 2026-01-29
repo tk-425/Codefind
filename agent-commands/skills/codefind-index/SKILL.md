@@ -1,3 +1,8 @@
+---
+name: codefind-index
+description: Index code repositories for semantic search using LSP-based symbol chunking. Use when you need to index a new repository, update an existing index after code changes, re-index with different settings, or troubleshoot indexing issues.
+---
+
 # codefind-index
 
 Index code repositories for semantic search using LSP-based symbol chunking and embeddings.

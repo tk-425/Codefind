@@ -1,3 +1,8 @@
+---
+name: codefind-query-cmd
+description: Execute semantic code search queries with precise filters. Use when you need to search code with specific project, language, or path filters, handle pagination, or understand query command syntax.
+---
+
 # codefind-query-cmd
 
 Execute semantic code search queries using the codefind query command.
@@ -165,64 +170,24 @@ codefind query "error handling" --project="API" --path=internal
 
 ## Pagination
 
-### Basic Pagination
+For detailed pagination guidance including page size customization, navigation strategies, and browsing patterns, see [pagination-guide.md](pagination-guide.md).
 
+**Quick reference:**
 ```bash
-# First page (default)
+# Default pagination (20 per page)
 codefind query "database"
 
-# Second page
+# Custom page size
+codefind query "database" --page-size=30
+
+# Navigate pages
 codefind query "database" --page=2
 
-# Third page
-codefind query "database" --page=3
+# Combine
+codefind query "database" --page=2 --page-size=30
 ```
 
-**Default behavior:**
-- Page size: 20 results per page
-- Page number: 1 (first page)
-- Results are consistently ordered by similarity score
-
-### Custom Page Size
-
-```bash
-# Show 10 results per page
-codefind query "functions" --page-size=10
-
-# Show 50 results per page (maximum)
-codefind query "functions" --page-size=50
-
-# Navigate to second page with 30 results per page
-codefind query "functions" --page=2 --page-size=30
-```
-
-**Page size limits:**
-- Minimum: 1 result
-- Maximum: 50 results
-- Default: 20 results
-
-**When to adjust page size:**
-- Small page size: Quick review of top results
-- Large page size: Comprehensive review of all matches
-
-### Pagination Examples
-
-**Scenario: Browse all authentication implementations**
-
-```bash
-# Start with page 1
-codefind query "authentication middleware" --all
-
-# Results show: "Showing results 1-20 of 47"
-# View next page
-codefind query "authentication middleware" --all --page=2
-
-# Results show: "Showing results 21-40 of 47"
-# View final page
-codefind query "authentication middleware" --all --page=3
-
-# Results show: "Showing results 41-47 of 47"
-```
+**Page size limits:** 1-50 results (default: 20)
 
 ## Result Interpretation
 
@@ -355,44 +320,24 @@ codefind query "auth" | grep "JWT"
 
 ## Common Queries
 
-### Find Functions
+For comprehensive query examples including functions, classes, patterns, API endpoints, configuration, tests, security, data handling, async code, logging, and framework-specific examples, see [query-examples.md](query-examples.md).
 
+**Quick examples:**
 ```bash
+# Find functions
 codefind query "function that validates email addresses"
-codefind query "function to connect to database"
-codefind query "helper function for date formatting"
-```
 
-### Find Classes
-
-```bash
+# Find classes
 codefind query "user model class"
-codefind query "HTTP client class"
-codefind query "configuration manager class"
-```
 
-### Find Patterns
-
-```bash
+# Find patterns
 codefind query "error handling with retry logic"
-codefind query "middleware for request logging"
-codefind query "decorator for caching"
-```
 
-### Find API Endpoints
-
-```bash
+# Find API endpoints
 codefind query "POST endpoint for user creation"
-codefind query "GET endpoint to list items"
-codefind query "API route for authentication"
-```
 
-### Find Configuration
-
-```bash
-codefind query "environment variable configuration"
+# Find configuration
 codefind query "database connection settings"
-codefind query "feature flags configuration"
 ```
 
 ## Troubleshooting
