@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/tk-425/Codefind/internal/keychain"
 )
 
 // GlobalConfig represents the global configuration
@@ -157,6 +159,28 @@ func ValidateGlobalConfig(cfg *GlobalConfig) error {
 		return fmt.Errorf("editor is required")
 	}
 	return nil
+}
+
+// GetAuthKey retrieves auth key with priority:
+// 1. System keychain (secure)
+// 2. config.json auth_key field (fallback for CI/CD)
+func GetAuthKey() (string, error) {
+	// Try keychain first
+	if key, err := keychain.GetAuthKey(); err == nil && key != "" {
+		return key, nil
+	}
+
+	// Fallback to config.json
+	cfg, err := LoadGlobalConfig()
+	if err != nil {
+		return "", fmt.Errorf("no auth key found - run 'codefind auth login'")
+	}
+
+	if cfg.AuthKey != "" {
+		return cfg.AuthKey, nil
+	}
+
+	return "", fmt.Errorf("no auth key found - run 'codefind auth login'")
 }
 // test incremental indexing
 // comment

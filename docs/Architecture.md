@@ -1,0 +1,135 @@
+# Architecture Overview
+
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           CLIENT (Mac/Linux)                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────────┐     ┌──────────────────┐     ┌─────────────────────┐   │
+│  │ codefind    │────▶│ Hybrid Chunker   │────▶│ API Client          │   │
+│  │ CLI         │     │ (LSP + Window)   │     │ (HTTP/JSON)         │   │
+│  └─────────────┘     └──────────────────┘     └──────────┬──────────┘   │
+│        │                     │                           │              │
+│        │              ┌──────┴──────┐                    │              │
+│        ▼              ▼             ▼                    │              │
+│  ┌──────────┐   ┌──────────┐ ┌──────────┐                │              │
+│  │ Config   │   │ gopls    │ │ pyright  │                │              │
+│  │ Manager  │   │ (Go)     │ │ (Python) │                │              │
+│  └──────────┘   └──────────┘ └──────────┘                │              │
+│                                                          │              │
+└──────────────────────────────────────────────────────────┼──────────────┘
+                                                           │
+                                                           │ HTTPS/HTTP
+                                                           │ (Tailscale)
+                                                           ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         SERVER (Ubuntu/Debian)                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                    FastAPI (app.py)                             │    │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐    │    │
+│  │  │/tokenize│ │/embed   │ │/index   │ │/query   │ │/health  │    │    │
+│  │  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └─────────┘    │    │
+│  └───────┼───────────┼───────────┼───────────┼─────────────────────┘    │
+│          │           │           │           │                          │
+│          │           ▼           ▼           ▼                          │
+│          │     ┌─────────────────────────────────┐                      │
+│          │     │         Ollama Service          │                      │
+│          │     │    (nomic-embed-text model)     │                      │
+│          │     └─────────────────────────────────┘                      │
+│          │                    │                                         │
+│          ▼                    ▼                                         │
+│  ┌───────────────┐   ┌─────────────────────────────┐                    │
+│  │ Transformers  │   │        ChromaDB             │                    │
+│  │ (Tokenizer)   │   │   (Vector Storage)          │                    │
+│  └───────────────┘   └─────────────────────────────┘                    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Data Flow
+
+### Indexing Flow
+
+```
+┌────────────┐     ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
+│ Source     │     │ Chunker     │     │ Tokenizer    │     │ Server       │
+│ Files      │────▶│ (LSP/Window)│────▶│ (Count)      │────▶│ (Embed+Store)│
+└────────────┘     └─────────────┘     └──────────────┘     └──────────────┘
+     │                   │                    │                    │
+     │                   ▼                    ▼                    ▼
+     │            Code Chunks           Token Counts          Vectors in
+     │           with Metadata          for Splitting          ChromaDB
+```
+
+### Query Flow
+
+```
+┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│ User Query  │────▶│ API Client   │────▶│ Ollama       │────▶│ ChromaDB     │
+│ (text)      │     │ (HTTP POST)  │     │ (Embed)      │     │ (Search)     │
+└─────────────┘     └──────────────┘     └──────────────┘     └──────────────┘
+                                                                    │
+                                                                    ▼
+                                                              ┌──────────────┐
+                                                              │ Results      │
+                                                              │ (Ranked)     │
+                                                              └──────────────┘
+```
+
+---
+
+## Component Details
+
+### Client Components
+
+| Component      | File                            | Description                     |
+| -------------- | ------------------------------- | ------------------------------- |
+| CLI            | `cmd/codefind/main.go`          | User interface, command parsing |
+| Config         | `internal/config/config.go`     | Configuration management        |
+| Hybrid Chunker | `internal/chunker/hybrid.go`    | LSP/Window chunking             |
+| API Client     | `internal/client/api_client.go` | Server communication            |
+| Indexer        | `internal/indexer/indexer.go`   | Orchestrates indexing           |
+| Query          | `internal/query/query.go`       | Query execution                 |
+
+### Server Components
+
+| Component      | File                         | Description              |
+| -------------- | ---------------------------- | ------------------------ |
+| API Server     | `app.py`                     | FastAPI endpoints        |
+| Ollama Service | `services/ollama_service.py` | Embedding generation     |
+| Chroma Service | `services/chroma_service.py` | Vector storage           |
+| Models         | `models.py`                  | Request/response schemas |
+
+---
+
+## Storage
+
+### Client Storage
+
+```
+~/.codefind/
+├── config.json           # Server URL, settings
+└── manifests/
+    └── <project-id>.json # Per-project tracking
+```
+
+### Server Storage
+
+```
+~/.codefind-server/
+├── .env                  # Environment config
+├── api-server/           # Python API code
+└── docker-compose.yml    # ChromaDB container
+```
+
+### ChromaDB Collections
+
+- **Collection per project:** `codefind_<repo_id>`
+- **Metadata per chunk:** file path, lines, language, symbol, hash
+- **Tombstone mode:** deleted chunks marked, not removed

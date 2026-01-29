@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/manifoldco/promptui"
@@ -19,10 +20,12 @@ import (
 	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/indexer"
+	"github.com/tk-425/Codefind/internal/keychain"
 	"github.com/tk-425/Codefind/internal/lsp"
 	"github.com/tk-425/Codefind/internal/query"
 	"github.com/tk-425/Codefind/internal/stats"
 	"github.com/tk-425/Codefind/pkg/api"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -58,6 +61,8 @@ func main() {
 		handleLSP(os.Args[2:])
 	case "stats":
 		handleStats(os.Args[2:])
+	case "health":
+		handleHealth()
 	case "cleanup":
 		handleCleanup(os.Args[2:])
 	case "clear":
@@ -66,6 +71,22 @@ func main() {
 			repoPath = os.Args[2]
 		}
 		handleClear(repoPath)
+	case "auth":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: codefind auth [login|logout|status]")
+			os.Exit(1)
+		}
+		switch os.Args[2] {
+		case "login":
+			handleAuthLogin()
+		case "logout":
+			handleAuthLogout()
+		case "status":
+			handleAuthStatus()
+		default:
+			fmt.Printf("Unknown auth command: %s\n", os.Args[2])
+			os.Exit(1)
+		}
 	case "help", "-h", "--help", "":
 		printUsage()
 	default:
@@ -321,14 +342,15 @@ func handleIndex() {
 	}
 
 	// Create and run indexer
-	if cfg.AuthKey == "" {
-		fmt.Println("Error: Auth key not configured. Set 'auth_key' in ~/.codefind/config.json")
+	authKey, err := config.GetAuthKey()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 	indexOpts := indexer.IndexOptions{
 		RepoPath:   repoPath,
 		ServerURL:  cfg.ServerURL,
-		AuthKey:    cfg.AuthKey,
+		AuthKey:    authKey,
 		Model:      "unclemusclez/jina-embeddings-v2-base-code:latest",
 		WindowOnly: *windowOnly,
 	}
@@ -373,12 +395,13 @@ func handleCleanup(args []string) {
 	}
 
 	// Create API client and cleanup client
-	if cfg.AuthKey == "" {
-		fmt.Println("Error: Auth key not configured. Set 'auth_key' in ~/.codefind/config.json")
+	authKey, err := config.GetAuthKey()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 	apiClient := client.NewAPIClient(cfg.ServerURL)
-	apiClient.SetAuthKey(cfg.AuthKey)
+	apiClient.SetAuthKey(authKey)
 	cc := cleanup.NewCleanupClient(apiClient)
 
 	// Run cleanup
@@ -428,6 +451,64 @@ func handleStats(args []string) {
 
 	// Display formatted stats
 	fmt.Println(stats.FormatStats(projectName, statsResp))
+}
+
+// handleHealth checks server health status
+func handleHealth() {
+	// Load global config
+	cfg, err := config.LoadGlobalConfig()
+	if err != nil {
+		fmt.Printf("Error: Not initialized. Run 'codefind init' first.\n")
+		os.Exit(1)
+	}
+
+	// Create API client
+	apiClient := client.NewAPIClient(cfg.ServerURL)
+
+	// Call health endpoint
+	healthResp, err := apiClient.Health()
+	if err != nil {
+		fmt.Println("❌ Server: UNREACHABLE")
+		fmt.Printf("   Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Check overall status
+	allOK := healthResp.Status == "ok"
+
+	// Display server status
+	if healthResp.Status == "ok" {
+		fmt.Println("✅ Server: OK")
+	} else {
+		fmt.Println("❌ Server: ERROR")
+		allOK = false
+	}
+
+	// Display Ollama status
+	if healthResp.OllamaStatus == "ok" {
+		fmt.Println("✅ Ollama: OK")
+	} else {
+		fmt.Println("❌ Ollama: ERROR")
+		allOK = false
+	}
+
+	// Display ChromaDB status
+	if healthResp.ChromaDBStatus == "ok" {
+		fmt.Println("✅ ChromaDB: OK")
+	} else {
+		fmt.Println("❌ ChromaDB: ERROR")
+		allOK = false
+	}
+
+	// Show error if any
+	if healthResp.Error != "" {
+		fmt.Printf("\nError details: %s\n", healthResp.Error)
+	}
+
+	// Exit with non-zero if any component unhealthy
+	if !allOK {
+		os.Exit(1)
+	}
 }
 
 // handleLSP handles the lsp command
@@ -1146,12 +1227,13 @@ func handleClear(repoPath string) {
 	}
 
 	// Call server to delete collection
-	if globalCfg.AuthKey == "" {
-		fmt.Println("Error: Auth key not configured. Set 'auth_key' in ~/.codefind/config.json")
+	authKey, err := config.GetAuthKey()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 	apiClient := client.NewAPIClient(globalCfg.ServerURL)
-	apiClient.SetAuthKey(globalCfg.AuthKey)
+	apiClient.SetAuthKey(authKey)
 
 	err = apiClient.ClearCollection(manifest.RepoID)
 	if err != nil {
@@ -1182,6 +1264,63 @@ func promptFor(label string, defaultValue string) string {
 		return defaultValue
 	}
 	return result
+}
+
+// handleAuthLogin stores auth key in the system keychain
+func handleAuthLogin() {
+	fmt.Print("Enter your auth key: ")
+
+	// Read password with hidden input
+	authKeyBytes, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		fmt.Printf("\nError reading auth key: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println()
+
+	authKey := strings.TrimSpace(string(authKeyBytes))
+	if authKey == "" {
+		fmt.Println("Error: Auth key cannot be empty")
+		os.Exit(1)
+	}
+
+	// Store in keychain
+	if err := keychain.SetAuthKey(authKey); err != nil {
+		fmt.Printf("Error storing auth key: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("✓ Auth key stored securely in system keychain")
+}
+
+// handleAuthLogout removes auth key from the system keychain
+func handleAuthLogout() {
+	if err := keychain.DeleteAuthKey(); err != nil {
+		// Check if it's a "not found" error - that's OK
+		if !keychain.HasAuthKey() {
+			fmt.Println("No auth key was stored in keychain")
+			return
+		}
+		fmt.Printf("Error removing auth key: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✓ Auth key removed from system keychain")
+}
+
+// handleAuthStatus shows the current auth key status
+func handleAuthStatus() {
+	if keychain.HasAuthKey() {
+		fmt.Println("✓ Auth key is stored in system keychain")
+	} else {
+		cfg, err := config.LoadGlobalConfig()
+		if err == nil && cfg.AuthKey != "" {
+			fmt.Println("⚠ Auth key found in config.json (not secure)")
+			fmt.Println("  Run 'codefind auth login' to migrate to keychain")
+		} else {
+			fmt.Println("✗ No auth key configured")
+			fmt.Println("  Run 'codefind auth login' to set up")
+		}
+	}
 }
 
 func printUsage() {
@@ -1221,6 +1360,15 @@ Usage:
   codefind clear [repo-path]
     Delete all indexed chunks for a repository
     (defaults to current directory if path not provided)
+
+  codefind auth login
+    Store auth key securely in system keychain
+
+  codefind auth logout
+    Remove auth key from system keychain
+
+  codefind auth status
+    Check if auth key is configured
 
   codefind help, -h, --help
     Show this help message
