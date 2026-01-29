@@ -524,10 +524,14 @@ func (idx *Indexer) sendChunksParallel(allChunks []api.Chunk) error {
 	const batchSize = 8  // Smaller batches for stability
 	const maxRetries = 3
 
-	// Use configured concurrency or default to 2
+	// Use configured concurrency with bounds (default: 2, max: 8)
 	maxConcurrent := idx.options.Concurrency
 	if maxConcurrent <= 0 {
 		maxConcurrent = 2
+	}
+	if maxConcurrent > 8 {
+		fmt.Printf("⚠️  Concurrency capped to 8 (was %d)\n", maxConcurrent)
+		maxConcurrent = 8
 	}
 
 	batches := splitIntoBatches(allChunks, batchSize)

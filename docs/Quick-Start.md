@@ -57,7 +57,10 @@ Expected output:
 
 ```bash
 cd /path/to/your/project
-codefind index
+codefind index                      # Default: 2 concurrent requests
+codefind index --concurrency=4      # Faster (if server can handle it)
+codefind index --concurrency=1      # Serial mode (for weak servers)
+# Max concurrency is 8
 ```
 
 ### Check Index Stats
