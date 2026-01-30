@@ -14,6 +14,7 @@ This skill provides detailed guidance on using the `codefind query` command for 
 ## When to Use
 
 Use this skill when you need to:
+
 - Execute specific queries with precise filters
 - Understand query command syntax and flags
 - Filter results by project, language, or path
@@ -34,9 +35,11 @@ codefind query <query-text> [flags]
 ```
 
 **Required:**
+
 - `<query-text>`: Natural language description of what you're looking for
 
 **Optional flags:**
+
 - `--project=<name>`: Search specific project
 - `--projects=<name1,name2>`: Search multiple projects
 - `--all`: Search all indexed projects
@@ -48,6 +51,8 @@ codefind query <query-text> [flags]
 
 ## Basic Usage
 
+> **Default Behavior:** Searches the **current project** only. Use `--all` for cross-project search.
+
 ### Simple Query
 
 ```bash
@@ -55,6 +60,7 @@ codefind query "JWT authentication"
 ```
 
 **Expected output:**
+
 ```
 Results for: "JWT authentication"
 
@@ -68,6 +74,7 @@ Results for: "JWT authentication"
 ```
 
 **What this returns:**
+
 - Results from the current project (if in a repo directory)
 - Top 20 results by default
 - Ranked by semantic similarity (0.0 to 1.0)
@@ -80,11 +87,13 @@ codefind query "how to handle database connection errors"
 ```
 
 **Good query characteristics:**
+
 - Descriptive and specific
 - Uses natural language
 - Describes intent, not just keywords
 
 **Examples:**
+
 - ✓ "validate user input for SQL injection"
 - ✓ "error handling with retry logic"
 - ✓ "authentication middleware for API endpoints"
@@ -96,21 +105,25 @@ codefind query "how to handle database connection errors"
 ### Filter by Project
 
 **Search specific project:**
+
 ```bash
 codefind query "database queries" --project="Code-Search"
 ```
 
 **Search multiple projects:**
+
 ```bash
 codefind query "authentication" --projects="API-Gateway,Auth-Service"
 ```
 
 **Search all projects:**
+
 ```bash
 codefind query "error handling patterns" --all
 ```
 
 **When to use:**
+
 - `--project`: You know which project has the code
 - `--projects`: Compare implementations across specific projects
 - `--all`: Find all instances across your codebase
@@ -129,10 +142,12 @@ codefind query "React components" --lang=typescript
 ```
 
 **Supported languages:**
+
 - `python`, `go`, `typescript`, `javascript`, `java`, `swift`
 - Language detection is based on file extension
 
 **Use case:**
+
 - Find language-specific implementations
 - Avoid results from other languages
 - Learn patterns in a specific language
@@ -151,6 +166,7 @@ codefind query "test examples" --path=tests
 ```
 
 **Use case:**
+
 - Limit search to specific module or package
 - Find code in particular directory structure
 - Separate production code from tests
@@ -173,6 +189,7 @@ codefind query "error handling" --project="API" --path=internal
 For detailed pagination guidance including page size customization, navigation strategies, and browsing patterns, see [pagination-guide.md](pagination-guide.md).
 
 **Quick reference:**
+
 ```bash
 # Default pagination (20 per page)
 codefind query "database"
@@ -200,6 +217,7 @@ codefind query "database" --page=2 --page-size=30
 ```
 
 **Example:**
+
 ```
 1. [API-Gateway] internal/handlers/auth.go:120-145 (score: 0.92)
    Function: ValidateToken
@@ -207,6 +225,7 @@ codefind query "database" --page=2 --page-size=30
 ```
 
 **Fields explained:**
+
 - **1**: Result ID (use with `codefind open 1`)
 - **[API-Gateway]**: Project name
 - **internal/handlers/auth.go**: File path relative to project root
@@ -219,6 +238,7 @@ codefind query "database" --page=2 --page-size=30
 ### Similarity Scores
 
 **Score interpretation:**
+
 - **0.90 - 1.00**: Excellent match, very relevant
 - **0.75 - 0.89**: Good match, likely relevant
 - **0.60 - 0.74**: Moderate match, possibly relevant
@@ -226,6 +246,7 @@ codefind query "database" --page=2 --page-size=30
 - **< 0.50**: Poor match, likely not relevant
 
 **Tips:**
+
 - Focus on results with scores > 0.75
 - Lower scores may still be useful for exploratory searches
 - Different queries may have different score distributions
@@ -235,21 +256,25 @@ codefind query "database" --page=2 --page-size=30
 ### Specific vs. Broad Queries
 
 **Specific (recommended for finding exact implementations):**
+
 ```bash
 codefind query "JWT token validation with expiration check"
 ```
 
 **Broad (useful for exploration):**
+
 ```bash
 codefind query "authentication"
 ```
 
 **When to be specific:**
+
 - You know exactly what you're looking for
 - Need precise implementations
 - Want to reduce noise in results
 
 **When to be broad:**
+
 - Exploring unfamiliar codebase
 - Finding all instances of a pattern
 - Learning how something is implemented
@@ -259,6 +284,7 @@ codefind query "authentication"
 **If results aren't relevant:**
 
 1. **Add more context:**
+
    ```bash
    # Too broad
    codefind query "validation"
@@ -268,6 +294,7 @@ codefind query "authentication"
    ```
 
 2. **Use domain-specific terms:**
+
    ```bash
    # Generic
    codefind query "check password"
@@ -277,6 +304,7 @@ codefind query "authentication"
    ```
 
 3. **Add filters:**
+
    ```bash
    # Add language filter
    codefind query "async functions" --lang=python
@@ -298,6 +326,7 @@ codefind query "user authentication" --projects="API,Auth-Service,Gateway"
 ```
 
 **Analyze results:**
+
 - Group by project to see different approaches
 - Compare similarity scores across projects
 - Identify best implementation to standardize on
@@ -305,11 +334,13 @@ codefind query "user authentication" --projects="API,Auth-Service,Gateway"
 ## Output Redirection
 
 **Save results to file:**
+
 ```bash
 codefind query "API endpoints" > results.txt
 ```
 
 **Pipe to other commands:**
+
 ```bash
 # Count results
 codefind query "functions" | grep -c "Function:"
@@ -323,6 +354,7 @@ codefind query "auth" | grep "JWT"
 For comprehensive query examples including functions, classes, patterns, API endpoints, configuration, tests, security, data handling, async code, logging, and framework-specific examples, see [query-examples.md](query-examples.md).
 
 **Quick examples:**
+
 ```bash
 # Find functions
 codefind query "function that validates email addresses"
@@ -345,11 +377,13 @@ codefind query "database connection settings"
 ### Issue: No results found
 
 **Possible causes:**
+
 - Project not indexed
 - Query too specific
 - Wrong project selected
 
 **Solutions:**
+
 ```bash
 # Verify project is indexed
 codefind list
@@ -367,6 +401,7 @@ codefind index
 ### Issue: Too many irrelevant results
 
 **Solutions:**
+
 ```bash
 # Add filters
 codefind query "term" --lang=python --path=src
@@ -381,6 +416,7 @@ codefind query "term" --page-size=5
 ### Issue: Results from wrong project
 
 **Solutions:**
+
 ```bash
 # Specify project explicitly
 codefind query "term" --project="CorrectProject"
@@ -392,6 +428,7 @@ codefind list
 ### Issue: Can't find recent changes
 
 **Solution:**
+
 ```bash
 # Re-index to pick up recent changes
 cd /path/to/repo
@@ -430,6 +467,7 @@ codefind query "recent feature"
 ## Integration with Other Commands
 
 **After querying:**
+
 ```bash
 # View specific result in editor
 codefind open <id>
@@ -442,6 +480,7 @@ grep -r "function_name" .
 ```
 
 **Before querying:**
+
 ```bash
 # Verify projects are indexed
 codefind list

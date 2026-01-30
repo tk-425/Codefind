@@ -2,6 +2,30 @@
 
 This directory contains reusable skills for AI agents (Claude, Gemini, etc.) to use with the codefind semantic code search tool.
 
+## When to Use Codefind vs Other Tools
+
+> **Default Behavior:** `codefind query` searches the **current project** only. Use `--all` for cross-project search.
+
+| Task                             | Best Tool           | Why                                    |
+| -------------------------------- | ------------------- | -------------------------------------- |
+| Find implementation of a feature | `codefind query`    | Semantic understanding of code purpose |
+| Find exact text/pattern match    | `grep_search`       | Precise literal matching               |
+| List files by extension/name     | `find_by_name`      | Fast file discovery                    |
+| View specific file               | `view_file`         | Direct file access                     |
+| Find callers/callees of function | `code-graph` skills | Static analysis                        |
+
+**Use codefind when:**
+
+- You need to understand _what_ code does, not just find text
+- Searching for implementations, patterns, or architectural concepts
+- Cross-project discovery with `--all`
+
+**Don't use codefind when:**
+
+- You know the exact function name → use `grep_search`
+- You need all files with `.py` extension → use `find_by_name`
+- You need line-by-line search → use `grep_search`
+
 ## Available Skills
 
 ### Command Skills (Phase 3B.1)
@@ -9,14 +33,17 @@ This directory contains reusable skills for AI agents (Claude, Gemini, etc.) to 
 Core command-line operations for codefind.
 
 #### 1. codefind-index
+
 **Purpose:** Index code repositories for semantic search
 
 **Use when:**
+
 - Indexing a new repository for the first time
 - Updating an existing index after code changes
 - Troubleshooting indexing issues
 
 **Key Features:**
+
 - LSP-based symbol chunking (primary method)
 - Window-based fallback chunking
 - Incremental indexing for fast updates
@@ -28,15 +55,18 @@ Core command-line operations for codefind.
 ---
 
 #### 2. codefind-query-cmd
+
 **Purpose:** Execute semantic code search queries
 
 **Use when:**
+
 - Searching with precise filters and options
 - Understanding query command syntax
 - Using pagination to navigate results
 - Filtering by project, language, or path
 
 **Key Features:**
+
 - Natural language query support
 - Multi-project search capabilities
 - Advanced filtering options
@@ -48,15 +78,18 @@ Core command-line operations for codefind.
 ---
 
 #### 3. codefind-list-projects
+
 **Purpose:** List and manage indexed repositories
 
 **Use when:**
+
 - Viewing all indexed projects
 - Verifying a project has been indexed
 - Finding project names for query filtering
 - Checking indexing status and timestamps
 
 **Key Features:**
+
 - Project overview with statistics
 - Index status verification
 - Project management operations
@@ -71,15 +104,18 @@ Core command-line operations for codefind.
 High-level workflows and specialized use cases.
 
 #### 4. codefind-search
+
 **Purpose:** Search codebase semantically using natural language queries
 
 **Use when:**
+
 - Finding implementations of specific features
 - Locating code handling particular operations
 - Discovering code patterns across projects
 - Searching for API endpoints or database queries
 
 **Key Features:**
+
 - Semantic search workflow guidance
 - Result interpretation strategies
 - Integration with editor (codefind open)
@@ -90,9 +126,11 @@ High-level workflows and specialized use cases.
 ---
 
 #### 5. codefind-patterns
+
 **Purpose:** Analyze code patterns across indexed projects
 
 **Use when:**
+
 - Finding all error handling patterns
 - Locating authentication/authorization implementations
 - Identifying API endpoint definitions
@@ -100,6 +138,7 @@ High-level workflows and specialized use cases.
 - Analyzing framework usage patterns
 
 **Key Features:**
+
 - Cross-project pattern analysis
 - Pattern comparison framework
 - Standardization recommendations
@@ -110,9 +149,11 @@ High-level workflows and specialized use cases.
 ---
 
 #### 6. codefind-migrate
+
 **Purpose:** Assist with code migration tasks
 
 **Use when:**
+
 - Migrating code between projects
 - Upgrading libraries or frameworks
 - Refactoring to new patterns
@@ -120,6 +161,7 @@ High-level workflows and specialized use cases.
 - Extracting shared code into libraries
 
 **Key Features:**
+
 - Migration workflow guidance
 - Dependency analysis
 - Similar code discovery
@@ -131,9 +173,11 @@ High-level workflows and specialized use cases.
 ---
 
 #### 7. codefind-summarize
+
 **Purpose:** Generate summaries and documentation from code
 
 **Use when:**
+
 - Understanding unfamiliar codebases
 - Generating documentation for code sections
 - Explaining component relationships
@@ -141,6 +185,7 @@ High-level workflows and specialized use cases.
 - Documenting API endpoints
 
 **Key Features:**
+
 - Function and module summarization
 - Component relationship documentation
 - API documentation generation
@@ -156,18 +201,21 @@ High-level workflows and specialized use cases.
 These skills are portable and can be copied to:
 
 ### User-level (all projects)
+
 ```bash
 mkdir -p ~/.claude/skills/
 cp -r codefind-* ~/.claude/skills/
 ```
 
 ### Project-level (single project)
+
 ```bash
 mkdir -p .claude/skills/
 cp -r /path/to/agent-commands/skills/codefind-* .claude/skills/
 ```
 
 ### Plugin-level (plugin-specific)
+
 ```bash
 cp -r /path/to/agent-commands/skills/codefind-* <plugin-dir>/skills/
 ```
@@ -175,6 +223,7 @@ cp -r /path/to/agent-commands/skills/codefind-* <plugin-dir>/skills/
 ## Usage for AI Agents
 
 Each skill provides:
+
 - Clear description and purpose
 - Prerequisites and requirements
 - Step-by-step workflow
@@ -188,13 +237,17 @@ Agents should read the SKILL.md file to understand how to use each skill effecti
 ## Skill Categories
 
 ### Command Skills
+
 Focus on specific codefind CLI commands:
+
 - **codefind-index**: Indexing operations
 - **codefind-query-cmd**: Query command syntax and options
 - **codefind-list-projects**: Project listing and management
 
 ### Workflow Skills
+
 Focus on high-level workflows and use cases:
+
 - **codefind-search**: General search workflow
 - **codefind-patterns**: Pattern analysis across projects
 - **codefind-migrate**: Code migration assistance
@@ -203,6 +256,7 @@ Focus on high-level workflows and use cases:
 ## Integration with Codefind
 
 All skills work with the core codefind CLI commands:
+
 - `codefind init` - Initialize configuration
 - `codefind index` - Index a repository
 - `codefind query` - Semantic search
@@ -233,6 +287,7 @@ patterns  migrate  summarize   (analyze)
 ```
 
 **Typical flow:**
+
 1. **Index** code with `codefind-index`
 2. **List** projects with `codefind-list-projects`
 3. **Search** with `codefind-search` or `codefind-query-cmd`
@@ -241,6 +296,7 @@ patterns  migrate  summarize   (analyze)
 ## Contributing
 
 When creating new skills:
+
 1. Create a directory: `codefind-<skill-name>/`
 2. Add SKILL.md with clear structure
 3. Include prerequisites and workflow
@@ -251,11 +307,13 @@ When creating new skills:
 ## Phase 3B Completion Status
 
 ### Step 3B.1: Agent Slash Commands ✅
+
 ✅ codefind-index skill created (489 lines)
 ✅ codefind-query-cmd skill created (542 lines)
 ✅ codefind-list-projects skill created (548 lines)
 
 ### Step 3B.2: Custom Skills for Agents ✅
+
 ✅ codefind-search skill created (211 lines)
 ✅ codefind-patterns skill created (339 lines)
 ✅ codefind-migrate skill created (391 lines)

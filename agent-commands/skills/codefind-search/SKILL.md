@@ -14,15 +14,35 @@ This skill enables AI agents to perform semantic code search across indexed proj
 ## When to Use
 
 Use this skill when you need to:
+
 - Find implementations of specific features or functions
 - Locate code handling particular operations (e.g., "authentication", "error handling")
 - Search for API endpoints or database queries
 - Discover code patterns across one or multiple projects
 - Find examples of how a library or framework is used
 
+## When NOT to Use
+
+**Use `grep_search` instead when:**
+
+- You know the exact function/class name
+- You need literal text matching
+- You need all occurrences of a specific string
+
+**Use `find_by_name` instead when:**
+
+- You need files by extension (_.py, _.go)
+- You're looking for a file by name pattern
+
+**Use `code-graph` skills instead when:**
+
+- You need callers/callees of a specific function
+- You need call chain analysis
+
 ## Prerequisites
 
 Before using this skill:
+
 1. Verify codefind is installed and available in PATH
 2. Ensure at least one project has been indexed with `codefind index`
 3. Check indexed projects with `codefind list`
@@ -32,6 +52,7 @@ Before using this skill:
 ### Basic Search Workflow
 
 1. **Run the search query**
+
    ```bash
    codefind query "your search query here"
    ```
@@ -47,27 +68,34 @@ Before using this skill:
 
 ### Search Options
 
+> **Default:** Searches current project only. Use `--all` for cross-project search.
+
 **Filter by project:**
+
 ```bash
 codefind query "authentication" --project="Code-Search"
 ```
 
 **Filter by language:**
+
 ```bash
 codefind query "error handling" --lang=python
 ```
 
 **Filter by file path:**
+
 ```bash
 codefind query "api endpoints" --path=src/api
 ```
 
 **Search across all projects:**
+
 ```bash
 codefind query "JWT validation" --all
 ```
 
 **Pagination:**
+
 ```bash
 codefind query "database queries" --page=2 --page-size=20
 ```
@@ -77,11 +105,13 @@ codefind query "database queries" --page=2 --page-size=20
 ### Example 1: Find Authentication Implementation
 
 **Query:**
+
 ```bash
 codefind query "JWT token validation"
 ```
 
 **Expected Output:**
+
 ```
 Results for: "JWT token validation"
 
@@ -99,6 +129,7 @@ Results for: "JWT token validation"
 ```
 
 **Next Steps:**
+
 - Use `codefind open 1` to examine the main implementation
 - Read the file to understand the validation logic
 - Check tests in result #3 for usage examples
@@ -106,11 +137,13 @@ Results for: "JWT token validation"
 ### Example 2: Find Error Handling Patterns
 
 **Query:**
+
 ```bash
 codefind query "error handling patterns" --lang=go
 ```
 
 **Expected Output:**
+
 ```
 Results for: "error handling patterns" (filtered by language: go)
 
@@ -126,11 +159,13 @@ Results for: "error handling patterns" (filtered by language: go)
 ### Example 3: Search Across Multiple Projects
 
 **Query:**
+
 ```bash
 codefind query "database connection pooling" --all
 ```
 
 **Expected Output:**
+
 ```
 Results for: "database connection pooling" (searching all projects)
 
@@ -150,6 +185,7 @@ Results for: "database connection pooling" (searching all projects)
 ## Output Format
 
 Each search result contains:
+
 - **Result ID**: Sequential number for easy reference (1, 2, 3...)
 - **Project Name**: In brackets [ProjectName]
 - **File Path**: Relative path from project root
@@ -169,17 +205,22 @@ Each search result contains:
    - Better than: "auth validate token"
    - The tool understands natural language context
 
-3. **Check multiple results:**
+3. **Interpret similarity scores:**
+   - **≥0.75**: Highly relevant, prioritize these
+   - **0.50-0.74**: Possibly relevant, worth checking
+   - **<0.50**: Likely not what you're looking for
+
+4. **Check multiple results:**
    - Don't stop at the first result
    - Different projects may have different approaches
    - Lower-scored results might still be relevant
 
-4. **Combine with file reading:**
+5. **Combine with file reading:**
    - After finding relevant code, read the full file for context
    - Check surrounding functions and imports
    - Look for related test files
 
-5. **Iterate on queries:**
+6. **Iterate on queries:**
    - If results aren't relevant, rephrase the query
    - Try different terminology or more specific descriptions
    - Use domain-specific terms when appropriate
@@ -187,16 +228,19 @@ Each search result contains:
 ## Troubleshooting
 
 **No results found:**
+
 - Verify the project is indexed: `codefind list`
 - Try broader or different search terms
 - Check if the code you're looking for exists in indexed files
 
 **Too many results:**
+
 - Use filters: --project, --lang, --path
 - Make query more specific
 - Reduce --page-size or use pagination
 
 **Low similarity scores:**
+
 - Results below 0.5 may not be relevant
 - Rephrase query to be more specific
 - Consider the domain terminology used in the codebase
@@ -204,6 +248,7 @@ Each search result contains:
 ## Integration with Other Tools
 
 After finding code with codefind-search:
+
 - Use **Read** tool to examine the full file
 - Use **Grep** to find all usages of a function/class
 - Use **Glob** to find related files
