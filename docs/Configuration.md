@@ -25,13 +25,13 @@ Complete reference for codefind configuration.
 codefind config get server_url
 
 # Set
-codefind config set server_url http://100.x.y.z:8080
+codefind config set server_url http://x.x.x.x:8080
 ```
 
 **Example values:**
 
 - `http://localhost:8080` (local server)
-- `http://100.108.160.103:8080` (Tailscale IP)
+- `http://x.x.x.x:8080` (Tailscale IP)
 
 ---
 
@@ -138,13 +138,15 @@ codefind index --window-only
 
 LSPs are auto-discovered from PATH. Supported:
 
-| Language   | LSP                        | Install                                      |
-| ---------- | -------------------------- | -------------------------------------------- |
-| Go         | gopls                      | `go install golang.org/x/tools/gopls@latest` |
-| Python     | pyright                    | `npm install -g pyright`                     |
-| TypeScript | typescript-language-server | `npm install -g typescript-language-server`  |
-| Java       | jdtls                      | Manual install                               |
-| Swift      | sourcekit-lsp              | Included with Xcode                          |
+| Language   | LSP                        | Install                                          |
+| ---------- | -------------------------- | ------------------------------------------------ |
+| Go         | gopls                      | `go install golang.org/x/tools/gopls@latest`     |
+| Python     | Pyright                    | `npm install -g pyright`                         |
+| TypeScript | TypeScript Language Server | `npm install -g typescript-language-server`      |
+| Java       | Eclipse JDT LS             | Manual install                                   |
+| Swift      | SourceKit-LSP              | Included with Xcode                              |
+| Rust       | rust-analyzer              | `rustup component add rust-analyzer`             |
+| OCaml      | OCaml LSP                  | `opam install ocaml-lsp-server`                  |
 
 ---
 

@@ -11,8 +11,8 @@ Get started with codefind in 5 minutes.
 
 ```bash
 # Clone and build
-git clone https://github.com/tk-425/code-search.git
-cd code-search
+git clone https://github.com/tk-425/Codefind.git
+cd Codefind
 go build -o codefind ./cmd/codefind
 
 # Move to PATH (optional)
@@ -27,7 +27,7 @@ sudo mv codefind /usr/local/bin/
 codefind init
 ```
 
-Enter your server URL when prompted (e.g., `http://100.x.y.z:8080`).
+Enter your server URL when prompted (e.g., `http://x.x.y.z:8080`).
 
 ### 2. Authenticate
 
