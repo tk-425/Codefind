@@ -215,57 +215,71 @@ Search indexed chunks (public, no auth required).
 
 ### Protected Endpoints (Require Auth)
 
-All protected endpoints require the `X-Auth-Key` header with a valid authentication key.
+All protected endpoints require `X-Auth-Key` header. For enhanced security, also include `X-Auth-Email`:
+
+| Header         | Purpose                            |
+| -------------- | ---------------------------------- |
+| `X-Auth-Key`   | Your authentication key (required) |
+| `X-Auth-Email` | Your email address (recommended)   |
 
 #### Index
 
 ```bash
 POST /index
 X-Auth-Key: <auth-key>
+X-Auth-Email: <your-email>
 Content-Type: application/json
 
 {
-  "auth_key": "<auth-key>",
   "chunks": [...],
   "collection": "my-repo"
 }
 ```
 
-Index chunks into ChromaDB.
+Index chunks into ChromaDB. Requires admin or manager role.
 
-### Admin Endpoints
+### Admin Endpoints (Require Admin Role)
 
-#### Bootstrap (Create First Manager)
+#### Roles
+
+| Role        | Can Index | Can Add/Remove Managers |
+| ----------- | --------- | ----------------------- |
+| **admin**   | ✓         | ✓                       |
+| **manager** | ✓         | ✗                       |
+
+#### Bootstrap (Create First Admin)
 
 ```bash
-POST /admin/bootstrap?email=admin@example.com&auth_key=secret-key-123
+POST /admin/bootstrap?email=admin@example.com&auth_key=your-secret-key
 ```
 
-One-time operation to create the first manager. Disabled after first use.
+One-time operation to create the first admin. Disabled after first use.
 
-#### Add Manager
+> **Note**: Avoid special characters (`#`, `&`, `@`) in auth_key — they have special meaning in URLs.
+
+#### Add Manager (Requires Admin)
 
 ```bash
-POST /admin/add?email=user@example.com
-X-Auth-Key: <valid-auth-key>
+POST /admin/add?email=user@example.com&auth_key=user-secret-key&role=manager
+X-Auth-Key: <admin-auth-key>
 ```
 
-Add new manager (requires valid auth key).
+Add new manager. The `role` parameter can be `admin` or `manager` (default: `manager`).
 
-#### List Managers
+#### List Managers (Requires Admin)
 
 ```bash
 GET /admin/list
-X-Auth-Key: <valid-auth-key>
+X-Auth-Key: <admin-auth-key>
 ```
 
-List all managers.
+List all managers with their roles.
 
-#### Remove Manager
+#### Remove Manager (Requires Admin)
 
 ```bash
 DELETE /admin/<email>
-X-Auth-Key: <valid-auth-key>
+X-Auth-Key: <admin-auth-key>
 ```
 
 Remove a manager.

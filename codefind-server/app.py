@@ -27,6 +27,7 @@ from models import (
 )
 from auth import (
     validate_auth_key,
+    validate_admin,
     create_first_manager,
     add_manager,
     remove_manager,
@@ -128,11 +129,15 @@ async def embed(request: EmbedRequest):
 
 
 @app.post("/index", response_model=IndexResponse)
-async def index_chunks(request: IndexRequest, x_auth_key: Optional[str] = Header(None)):
+async def index_chunks(
+    request: IndexRequest,
+    x_auth_key: Optional[str] = Header(None),
+    x_auth_email: Optional[str] = Header(None),
+):
     """Index chunks: embed via Ollama and store in ChromaDB."""
 
-    # Step 1: Authenticate
-    if not x_auth_key or not validate_auth_key(x_auth_key):
+    # Step 1: Authenticate (email + key if provided, key only for backward compatibility)
+    if not x_auth_key or not validate_auth_key(x_auth_key, x_auth_email):
         get_audit_logger().log_auth_fail(endpoint="/index")
         raise HTTPException(status_code=401, detail="Invalid auth key")
 
@@ -197,14 +202,15 @@ async def soft_delete_chunks(
     repo_id: str,
     file_paths: list[str],
     x_auth_key: Optional[str] = Header(None),
+    x_auth_email: Optional[str] = Header(None),
 ):
     """Mark chunks as deleted without removing from ChromaDB.
 
     This preserves history and allows recovery.
     Requires manager authentication.
     """
-    # Validate auth
-    if not x_auth_key or not validate_auth_key(x_auth_key):
+    # Validate auth (email + key if provided)
+    if not x_auth_key or not validate_auth_key(x_auth_key, x_auth_email):
         get_audit_logger().log_auth_fail(endpoint="/chunks/delete")
         raise HTTPException(
             status_code=401,
@@ -251,14 +257,15 @@ async def soft_delete_chunks(
 async def clear_collection(
     repo_id: str,
     x_auth_key: Optional[str] = Header(None),
+    x_auth_email: Optional[str] = Header(None),
 ):
     """Delete all chunks in a collection.
 
     This completely removes the collection from ChromaDB.
     Requires manager authentication.
     """
-    # Validate auth
-    if not x_auth_key or not validate_auth_key(x_auth_key):
+    # Validate auth (email + key if provided)
+    if not x_auth_key or not validate_auth_key(x_auth_key, x_auth_email):
         get_audit_logger().log_auth_fail(endpoint="/clear")
         raise HTTPException(
             status_code=401,
@@ -292,15 +299,16 @@ async def clear_collection(
 async def update_chunk_status(
     request: ChunkStatusRequest,
     x_auth_key: Optional[str] = Header(None),
+    x_auth_email: Optional[str] = Header(None),
 ):
     """Mark chunks as deleted or active.
 
     This soft-deletes chunks by updating their status metadata.
     Used for tombstone mode - retains code history for querying.
     """
-    # Validate auth (use header or request body)
+    # Validate auth (use header or request body, email from header)
     auth_key = x_auth_key or request.auth_key
-    if not auth_key or not validate_auth_key(auth_key):
+    if not auth_key or not validate_auth_key(auth_key, x_auth_email):
         get_audit_logger().log_auth_fail(endpoint="/chunks/status")
         raise HTTPException(status_code=401, detail="Invalid or missing auth key")
 
@@ -364,14 +372,15 @@ async def update_chunk_status(
 async def purge_deleted_chunks(
     request: PurgeRequest,
     x_auth_key: Optional[str] = Header(None),
+    x_auth_email: Optional[str] = Header(None),
 ):
     """Permanently remove deleted chunks older than specified date.
 
     Protected endpoint - requires X-Auth-Key header.
     """
-    # Validate auth (use header or request body)
+    # Validate auth (use header or request body, email from header)
     auth_key = x_auth_key or request.auth_key
-    if not auth_key or not validate_auth_key(auth_key):
+    if not auth_key or not validate_auth_key(auth_key, x_auth_email):
         get_audit_logger().log_auth_fail(endpoint="/chunks/purge")
         return PurgeResponse(chunks_found=0, chunks_removed=0, error="Unauthorized")
 
@@ -761,9 +770,20 @@ async def bootstrap(email: str, auth_key: str, request: Request):
 
 @app.post("/admin/add")
 async def add_admin(
-    email: str, request: Request, x_auth_key: Optional[str] = Header(None)
+    email: str,
+    auth_key: str,
+    request: Request,
+    role: str = "manager",
+    x_auth_key: Optional[str] = Header(None),
+    x_auth_email: Optional[str] = Header(None),
 ):
-    """Add new manager (requires auth)."""
+    """Add new manager (requires admin auth).
+
+    Args:
+        email: Email for the new manager
+        auth_key: Auth key for the new manager
+        role: Role for new manager ('admin' or 'manager', defaults to 'manager')
+    """
     client_ip = request.client.host if request.client else "unknown"
     rate_limiter = get_rate_limiter()
 
@@ -773,23 +793,27 @@ async def add_admin(
             status_code=429, detail="Too many auth failures. Try again later."
         )
 
-    if not x_auth_key or not validate_auth_key(x_auth_key):
+    # Require admin role to add managers
+    if not x_auth_key or not validate_admin(x_auth_key, x_auth_email):
         rate_limiter.record_auth_failure(client_ip, "/admin/add")
-        raise HTTPException(status_code=401, detail="Invalid auth key")
+        raise HTTPException(status_code=403, detail="Admin access required")
 
-    # TODO: Generate new auth key and return to caller
-    success = add_manager(email, "new-auth-key-placeholder")
+    success = add_manager(email, auth_key, role)
 
     if not success:
         raise HTTPException(status_code=400, detail="Manager already exists")
 
     get_audit_logger().log_admin_add(email=email)
-    return {"status": "ok", "message": f"Manager {email} added"}
+    return {"status": "ok", "message": f"{role.capitalize()} {email} added"}
 
 
 @app.get("/admin/list")
-async def list_admins(request: Request, x_auth_key: Optional[str] = Header(None)):
-    """List all managers (requires auth)."""
+async def list_admins(
+    request: Request,
+    x_auth_key: Optional[str] = Header(None),
+    x_auth_email: Optional[str] = Header(None),
+):
+    """List all managers (requires admin auth)."""
     client_ip = request.client.host if request.client else "unknown"
     rate_limiter = get_rate_limiter()
 
@@ -799,9 +823,10 @@ async def list_admins(request: Request, x_auth_key: Optional[str] = Header(None)
             status_code=429, detail="Too many auth failures. Try again later."
         )
 
-    if not x_auth_key or not validate_auth_key(x_auth_key):
+    # Require admin role to list managers
+    if not x_auth_key or not validate_admin(x_auth_key, x_auth_email):
         rate_limiter.record_auth_failure(client_ip, "/admin/list")
-        raise HTTPException(status_code=401, detail="Invalid auth key")
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     managers = list_managers()
     return {"managers": managers}
@@ -809,9 +834,12 @@ async def list_admins(request: Request, x_auth_key: Optional[str] = Header(None)
 
 @app.delete("/admin/{email}")
 async def remove_admin(
-    email: str, request: Request, x_auth_key: Optional[str] = Header(None)
+    email: str,
+    request: Request,
+    x_auth_key: Optional[str] = Header(None),
+    x_auth_email: Optional[str] = Header(None),
 ):
-    """Remove manager (requires auth)."""
+    """Remove manager (requires admin auth)."""
     client_ip = request.client.host if request.client else "unknown"
     rate_limiter = get_rate_limiter()
 
@@ -821,9 +849,10 @@ async def remove_admin(
             status_code=429, detail="Too many auth failures. Try again later."
         )
 
-    if not x_auth_key or not validate_auth_key(x_auth_key):
+    # Require admin role to remove managers
+    if not x_auth_key or not validate_admin(x_auth_key, x_auth_email):
         rate_limiter.record_auth_failure(client_ip, "/admin/remove")
-        raise HTTPException(status_code=401, detail="Invalid auth key")
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     success = remove_manager(email)
 

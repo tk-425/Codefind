@@ -356,10 +356,12 @@ func handleIndex() {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+	email, _ := keychain.GetEmail() // Email is optional for backward compatibility
 	indexOpts := indexer.IndexOptions{
 		RepoPath:    repoPath,
 		ServerURL:   cfg.ServerURL,
 		AuthKey:     authKey,
+		Email:       email,
 		Model:       "unclemusclez/jina-embeddings-v2-base-code:latest",
 		WindowOnly:  *windowOnly,
 		Concurrency: *concurrency,
@@ -414,8 +416,10 @@ func handleCleanup(args []string) {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+	email, _ := keychain.GetEmail() // Optional for backward compatibility
 	apiClient := client.NewAPIClient(cfg.ServerURL)
 	apiClient.SetAuthKey(authKey)
+	apiClient.SetEmail(email)
 	cc := cleanup.NewCleanupClient(apiClient)
 
 	// Run cleanup
@@ -1246,8 +1250,10 @@ func handleClear(repoPath string) {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+	email, _ := keychain.GetEmail() // Optional for backward compatibility
 	apiClient := client.NewAPIClient(globalCfg.ServerURL)
 	apiClient.SetAuthKey(authKey)
+	apiClient.SetEmail(email)
 
 	err = apiClient.ClearCollection(manifest.RepoID)
 	if err != nil {
@@ -1280,11 +1286,20 @@ func promptFor(label string, defaultValue string) string {
 	return result
 }
 
-// handleAuthLogin stores auth key in the system keychain
+// handleAuthLogin stores auth credentials in the system keychain
 func handleAuthLogin() {
-	fmt.Print("Enter your auth key: ")
+	// Prompt for email first (visible input)
+	fmt.Print("Enter your email: ")
+	var email string
+	fmt.Scanln(&email)
+	email = strings.TrimSpace(email)
+	if email == "" {
+		fmt.Println("Error: Email cannot be empty")
+		os.Exit(1)
+	}
 
-	// Read password with hidden input
+	// Prompt for auth key (hidden input)
+	fmt.Print("Enter your auth key: ")
 	authKeyBytes, err := term.ReadPassword(int(syscall.Stdin))
 	if err != nil {
 		fmt.Printf("\nError reading auth key: %v\n", err)
@@ -1298,40 +1313,66 @@ func handleAuthLogin() {
 		os.Exit(1)
 	}
 
-	// Store in keychain
+	// Store email in keychain
+	if err := keychain.SetEmail(email); err != nil {
+		fmt.Printf("Error storing email: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Store auth key in keychain
 	if err := keychain.SetAuthKey(authKey); err != nil {
 		fmt.Printf("Error storing auth key: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("✓ Auth key stored securely in system keychain")
+	fmt.Printf("✓ Logged in as %s\n", email)
+	fmt.Println("  Credentials stored securely in system keychain")
 }
 
-// handleAuthLogout removes auth key from the system keychain
+
+// handleAuthLogout removes auth credentials from the system keychain
 func handleAuthLogout() {
+	// Get email for display before deleting
+	email, _ := keychain.GetEmail()
+
+	// Delete auth key
 	if err := keychain.DeleteAuthKey(); err != nil {
-		// Check if it's a "not found" error - that's OK
 		if !keychain.HasAuthKey() {
-			fmt.Println("No auth key was stored in keychain")
-			return
+			// Auth key wasn't stored, that's OK
+		} else {
+			fmt.Printf("Error removing auth key: %v\n", err)
+			os.Exit(1)
 		}
-		fmt.Printf("Error removing auth key: %v\n", err)
-		os.Exit(1)
 	}
-	fmt.Println("✓ Auth key removed from system keychain")
+
+	// Delete email
+	if err := keychain.DeleteEmail(); err != nil {
+		// Ignore errors, email might not exist
+	}
+
+	if email != "" {
+		fmt.Printf("✓ Logged out %s\n", email)
+	} else {
+		fmt.Println("✓ Credentials removed from system keychain")
+	}
 }
 
-// handleAuthStatus shows the current auth key status
+// handleAuthStatus shows the current auth status
 func handleAuthStatus() {
 	if keychain.HasAuthKey() {
-		fmt.Println("✓ Auth key is stored in system keychain")
+		email, _ := keychain.GetEmail()
+		if email != "" {
+			fmt.Printf("✓ Logged in as %s\n", email)
+		} else {
+			fmt.Println("✓ Auth key is stored in system keychain")
+		}
 	} else {
 		cfg, err := config.LoadGlobalConfig()
 		if err == nil && cfg.AuthKey != "" {
 			fmt.Println("⚠ Auth key found in config.json (not secure)")
 			fmt.Println("  Run 'codefind auth login' to migrate to keychain")
 		} else {
-			fmt.Println("✗ No auth key configured")
+			fmt.Println("✗ Not logged in")
 			fmt.Println("  Run 'codefind auth login' to set up")
 		}
 	}
