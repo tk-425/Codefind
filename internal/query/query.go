@@ -31,6 +31,23 @@ func (qc *QueryClient) Search(query string, topK int, languages []string, pathPr
 	return qc.apiClient.Query(req)
 }
 
+// SearchWithCollection performs a semantic search with optional collection/project scope
+func (qc *QueryClient) SearchWithCollection(query string, collection string, topK int, languages []string, pathPrefix string, excludePath string, includeDeleted bool, deletedOnly bool, page int, pageSize int) (*api.QueryResponse, error) {
+	req := api.QueryRequest{
+		Query:          query,
+		Collection:     collection,
+		TopK:           topK,
+		Languages:      languages,
+		PathPrefix:     pathPrefix,
+		ExcludePath:    excludePath,
+		IncludeDeleted: includeDeleted,
+		DeletedOnly:    deletedOnly,
+		Page:           page,
+		PageSize:       pageSize,
+	}
+	return qc.apiClient.Query(req)
+}
+
 // SearchProject performs a query limited to a specific project
 func (qc *QueryClient) SearchProject(query string, projectID string, topK int) (*api.QueryResponse, error) {
 	req := api.QueryRequest{

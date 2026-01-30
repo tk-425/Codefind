@@ -891,6 +891,7 @@ type queryArgs struct {
 	pageSize       int
 	includeDeleted bool
 	deletedOnly    bool
+	searchAll      bool // --all flag: search all projects
 }
 
 func handleQuery(args []string) {
@@ -912,14 +913,15 @@ func handleQuery(args []string) {
 		fmt.Println("Error: query text required")
 		fmt.Println("\nUsage: codefind query <text> [options]")
 		fmt.Println("\nOptions:")
-		fmt.Println("  --project=<id>    Limit to specific project")
-		fmt.Println("  --lang=<lang>     Filter by language (python, go, typescript)")
-		fmt.Println("  --path=<prefix>   Filter by file path prefix")
-		fmt.Println("  --exclude=<pat>   Exclude paths matching regex pattern")
-		fmt.Println("  --top-k=<n>       Number of results (default 10)")
-		fmt.Println("  --limit=<n>       Alias for --top-k")
-		fmt.Println("  --page=<n>        Page number for pagination (default 1)")
-		fmt.Println("  --page-size=<n>   Results per page (default 20)")
+		fmt.Println("  --all              Search all indexed projects (default: current project only)")
+		fmt.Println("  --project=<id>     Limit to specific project")
+		fmt.Println("  --lang=<lang>      Filter by language (python, go, typescript)")
+		fmt.Println("  --path=<prefix>    Filter by file path prefix")
+		fmt.Println("  --exclude=<pat>    Exclude paths matching regex pattern")
+		fmt.Println("  --top-k=<n>        Number of results (default 10)")
+		fmt.Println("  --limit=<n>        Alias for --top-k")
+		fmt.Println("  --page=<n>         Page number for pagination (default 1)")
+		fmt.Println("  --page-size=<n>    Results per page (default 20)")
 		os.Exit(1)
 	}
 
@@ -934,6 +936,26 @@ func handleQuery(args []string) {
 	// Parse flag arguments
 	qa := parseQueryArgs(flagArgs)
 
+	// Determine project scope
+	collection := qa.projectID // Explicit --project takes precedence
+	if collection == "" && !qa.searchAll {
+		// Default to current project if not --all
+		cwd, _ := os.Getwd()
+		repoID := indexer.GenerateRepoID(cwd)
+		// Check if current directory is indexed
+		if manifest, err := config.LoadManifest(repoID); err == nil {
+			collection = manifest.RepoID
+			fmt.Printf("Searching in: %s\n", manifest.ProjectName)
+		} else {
+			// Current dir not indexed, search all with a note
+			fmt.Println("Note: Current directory not indexed, searching all projects")
+			fmt.Println("      Use 'codefind index' to index this project")
+			fmt.Println()
+		}
+	} else if qa.searchAll {
+		fmt.Println("Searching all projects")
+	}
+
 	// Create API client and query client
 	apiClient := client.NewAPIClient(cfg.ServerURL)
 	qc := query.NewQueryClient(apiClient)
@@ -945,7 +967,7 @@ func handleQuery(args []string) {
 	}
 
 	// Execute search with new filter fields
-	resp, err := qc.Search(queryText, qa.topK, languages, qa.pathPrefix, qa.excludePath, qa.includeDeleted, qa.deletedOnly)
+	resp, err := qc.SearchWithCollection(queryText, collection, qa.topK, languages, qa.pathPrefix, qa.excludePath, qa.includeDeleted, qa.deletedOnly, qa.page, qa.pageSize)
 	if err != nil {
 		fmt.Printf("Query failed: %v\n", err)
 		os.Exit(1)
@@ -994,6 +1016,8 @@ func parseQueryArgs(args []string) queryArgs {
 			qa.includeDeleted = true
 		} else if arg == "--deleted-only" {
 			qa.deletedOnly = true
+		} else if arg == "--all" {
+			qa.searchAll = true
 		}
 	}
 
