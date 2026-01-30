@@ -272,6 +272,9 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 		return nil
 	}
 
+	// Deduplicate chunks before sending (prevents duplicate ID errors)
+	allChunks = deduplicateChunks(allChunks)
+
 	// Send chunks to server in batches
 	return idx.sendChunksInBatches(allChunks)
 }
@@ -375,6 +378,8 @@ func (idx *Indexer) fullIndex() error {
 		chunkCounts[file.Path] = len(verifiedChunks) // Store chunk count for this file
 	}
 
+	// Deduplicate chunks before sending (prevents duplicate ID errors)
+	allChunks = deduplicateChunks(allChunks)
 	fmt.Printf("✓ Total chunks to index: %d\n", len(allChunks))
 
 	// Send chunks to server in parallel batches
@@ -521,7 +526,7 @@ func splitIntoBatches(chunks []api.Chunk, batchSize int) [][]api.Chunk {
 
 // sendChunksParallel sends chunks to server with concurrent goroutines
 func (idx *Indexer) sendChunksParallel(allChunks []api.Chunk) error {
-	const batchSize = 8  // Smaller batches for stability
+	const batchSize = 8 // Smaller batches for stability
 	const maxRetries = 3
 
 	// Use configured concurrency with bounds (default: 2, max: 8)
@@ -634,6 +639,22 @@ func isNetworkError(err error) bool {
 		strings.Contains(errStr, "no such host") ||
 		strings.Contains(errStr, "network unreachable") ||
 		strings.Contains(errStr, "dial tcp")
+}
+
+// deduplicateChunks removes duplicate chunks by ID, keeping the first occurrence
+// This prevents "duplicate ID in upsert" errors from ChromaDB when LSP chunking
+// produces overlapping symbols or tokenization creates identical chunks
+func deduplicateChunks(chunks []api.Chunk) []api.Chunk {
+	seen := make(map[string]bool)
+	result := []api.Chunk{}
+
+	for _, chunk := range chunks {
+		if !seen[chunk.ID] {
+			seen[chunk.ID] = true
+			result = append(result, chunk)
+		}
+	}
+	return result
 }
 
 // GenerateRepoID creates a unique ID for a repository
