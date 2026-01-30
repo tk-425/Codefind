@@ -11,15 +11,15 @@ import (
 
 // Color definitions for consistent styling
 var (
-	indexColor    = color.New(color.FgCyan, color.Bold)
-	fileColor     = color.New(color.FgWhite)
+	indexColor      = color.New(color.FgCyan, color.Bold)
+	fileColor       = color.New(color.FgWhite)
 	similarityColor = color.New(color.FgYellow)
-	repoColor     = color.New(color.FgHiBlack)
-	langColor     = color.New(color.FgMagenta)
-	contentColor  = color.New(color.FgHiBlack)
-	timestampColor = color.New(color.FgHiBlack, color.Italic)
-	headerColor   = color.New(color.FgGreen, color.Bold)
-	errorColor    = color.New(color.FgRed)
+	repoColor       = color.New(color.FgHiBlack)
+	langColor       = color.New(color.FgMagenta)
+	contentColor    = color.New(color.FgHiBlack)
+	timestampColor  = color.New(color.FgHiBlack, color.Italic)
+	headerColor     = color.New(color.FgGreen, color.Bold)
+	errorColor      = color.New(color.FgRed)
 )
 
 // FormatResults formats query results for display with colors
@@ -29,7 +29,7 @@ func FormatResults(resp *api.QueryResponse) string {
 	}
 
 	var output strings.Builder
-	
+
 	// Header with result count and pagination
 	header := fmt.Sprintf("Found %d results (page %d/%d, %d per page)\n\n",
 		resp.TotalCount,
@@ -42,6 +42,15 @@ func FormatResults(resp *api.QueryResponse) string {
 		idx := (resp.Page-1)*resp.PageSize + i + 1
 		output.WriteString(formatResult(idx, result))
 		output.WriteString("\n")
+	}
+
+	// Add hint about more options if showing limited results
+	hintColor := color.New(color.FgHiBlack, color.Italic)
+	totalPages := (resp.TotalCount + resp.PageSize - 1) / resp.PageSize
+	if totalPages > 1 && resp.Page < totalPages {
+		output.WriteString(hintColor.Sprintf("Tip: Use --page=%d for next page, --all to search all projects\n", resp.Page+1))
+	} else if len(resp.Results) >= 10 {
+		output.WriteString(hintColor.Sprint("Tip: Use --top-k=20 for more results, --all to search all projects\n"))
 	}
 
 	return output.String()
@@ -70,7 +79,7 @@ func formatResult(index int, result api.QueryResult) string {
 	sb.WriteString(repoColor.Sprintf("[%s] ", repoIDShort))
 	sb.WriteString(fmt.Sprintf("%s | ", meta.ProjectName))
 	sb.WriteString(langColor.Sprintf("%s", meta.Language))
-	
+
 	// Show [DELETED] prefix for deleted chunks (tombstone mode)
 	if meta.Status == "deleted" {
 		deletedColor := color.New(color.FgRed, color.Bold)
@@ -100,31 +109,31 @@ func formatResult(index int, result api.QueryResult) string {
 // getContentPreview returns the first N lines of content
 func getContentPreview(content string, maxLines int) []string {
 	lines := strings.Split(content, "\n")
-	
+
 	// Trim empty lines from start
 	startIdx := 0
 	for startIdx < len(lines) && strings.TrimSpace(lines[startIdx]) == "" {
 		startIdx++
 	}
-	
+
 	if startIdx >= len(lines) {
 		return []string{"(empty)"}
 	}
-	
+
 	lines = lines[startIdx:]
-	
+
 	if len(lines) > maxLines {
 		lines = lines[:maxLines]
 		lines = append(lines, "...")
 	}
-	
+
 	// Truncate long lines
 	for i, line := range lines {
 		if len(line) > 100 {
 			lines[i] = line[:100] + "..."
 		}
 	}
-	
+
 	return lines
 }
 

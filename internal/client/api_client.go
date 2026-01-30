@@ -16,6 +16,7 @@ type APIClient struct {
 	baseURL string
 	client  *http.Client
 	authKey string
+	email   string
 }
 
 // NewAPIClient creates a new API client
@@ -31,6 +32,11 @@ func NewAPIClient(baseURL string) *APIClient {
 // SetAuthKey sets the authentication key for protected endpoints
 func (ac *APIClient) SetAuthKey(authKey string) {
 	ac.authKey = authKey
+}
+
+// SetEmail sets the email for protected endpoints
+func (ac *APIClient) SetEmail(email string) {
+	ac.email = email
 }
 
 // Tokenize sends texts to server for tokenization
@@ -212,6 +218,9 @@ func (ac *APIClient) post(endpoint string, data []byte, requireAuth bool) (*http
 
 	if requireAuth && ac.authKey != "" {
 		req.Header.Set("X-Auth-Key", ac.authKey)
+		if ac.email != "" {
+			req.Header.Set("X-Auth-Email", ac.email)
+		}
 	}
 
 	resp, err := ac.client.Do(req)
@@ -241,6 +250,9 @@ func (ac *APIClient) patch(endpoint string, data []byte, requireAuth bool) (*htt
 
 	if requireAuth && ac.authKey != "" {
 		req.Header.Set("X-Auth-Key", ac.authKey)
+		if ac.email != "" {
+			req.Header.Set("X-Auth-Email", ac.email)
+		}
 	}
 
 	resp, err := ac.client.Do(req)
@@ -291,6 +303,9 @@ func (ac *APIClient) delete(endpoint string) (*http.Response, error) {
 
 	if ac.authKey != "" {
 		req.Header.Set("X-Auth-Key", ac.authKey)
+		if ac.email != "" {
+			req.Header.Set("X-Auth-Email", ac.email)
+		}
 	}
 
 	resp, err := ac.client.Do(req)
@@ -320,6 +335,9 @@ func (ac *APIClient) deleteWithBody(endpoint string, data []byte, requireAuth bo
 
 	if requireAuth && ac.authKey != "" {
 		req.Header.Set("X-Auth-Key", ac.authKey)
+		if ac.email != "" {
+			req.Header.Set("X-Auth-Email", ac.email)
+		}
 	}
 
 	resp, err := ac.client.Do(req)

@@ -20,6 +20,7 @@ type IndexOptions struct {
 	RepoPath    string // Repository path
 	ServerURL   string // Server URL for API calls
 	AuthKey     string // Authentication key
+	Email       string // Manager email for authentication
 	Model       string // Embedding model name
 	WindowOnly  bool   // Force window-based chunking (skip LSP)
 	Concurrency int    // Number of concurrent batch requests (default: 2)
@@ -37,6 +38,7 @@ type Indexer struct {
 func NewIndexer(opts IndexOptions) *Indexer {
 	apiClient := client.NewAPIClient(opts.ServerURL)
 	apiClient.SetAuthKey(opts.AuthKey)
+	apiClient.SetEmail(opts.Email)
 	tokenizer := client.NewTokenizer(apiClient, opts.Model)
 
 	return &Indexer{
