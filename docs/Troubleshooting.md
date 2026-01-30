@@ -116,6 +116,18 @@ Found 0 files to index
 
    # TypeScript
    npm install -g typescript-language-server
+
+   # Java
+   # Download from https://download.eclipse.org/jdtls/
+
+   # Swift (included with Xcode on macOS)
+   # xcode-select --install
+
+   # Rust
+   rustup component add rust-analyzer
+
+   # OCaml
+   opam install ocaml-lsp-server
    ```
 
 2. **Verify LSP in PATH:**

@@ -20,11 +20,12 @@ Codefind is a semantic code search tool that indexes your codebase and allows na
 **LSP chunking (best quality):**
 
 - Go (gopls)
-- Python (pyright)
-- TypeScript/JavaScript (typescript-language-server)
-- Java (jdtls)
-- Swift (sourcekit-lsp)
-- Objective-C (sourcekit-lsp)
+- Python (Pyright)
+- TypeScript/JavaScript (TypeScript Language Server)
+- Java (Eclipse JDT LS)
+- Swift (SourceKit-LSP)
+- Rust (rust-analyzer)
+- OCaml (OCaml LSP)
 
 **Window chunking (fallback):**
 

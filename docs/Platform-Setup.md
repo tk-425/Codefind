@@ -15,8 +15,8 @@ Setup instructions for codefind on different platforms.
 
 ```bash
 # Clone and build
-git clone https://github.com/tk-425/code-search.git
-cd code-search
+git clone https://github.com/tk-425/Codefind.git
+cd Codefind
 go build -o codefind ./cmd/codefind
 
 # Install globally
@@ -37,12 +37,24 @@ sudo mv codefind /usr/local/bin/
 
   # TypeScript
   npm install -g typescript-language-server typescript
+
+  # Java (requires manual setup)
+  # Download from https://download.eclipse.org/jdtls/
+
+  # Swift (included with Xcode on macOS)
+  # xcode-select --install
+
+  # Rust
+  rustup component add rust-analyzer
+
+  # OCaml
+  opam install ocaml-lsp-server
   ```
 
 ### Network Access
 
 - **Tailscale**: ✅ Verified working
-- Use Tailscale IP for server URL (e.g., `http://100.x.y.z:8080`)
+- Use Tailscale IP for server URL (e.g., `http://x.x.x.x:8080`)
 
 ---
 
@@ -61,8 +73,8 @@ Based on Go's cross-platform compatibility, codefind should work on:
 
 ```bash
 # Clone and build
-git clone https://github.com/tk-425/code-search.git
-cd code-search
+git clone https://github.com/tk-425/Codefind.git
+cd Codefind
 go build -o codefind ./cmd/codefind
 
 # Install globally
