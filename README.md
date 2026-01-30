@@ -30,9 +30,9 @@ codefind query "error handling with retry logic"
 
 ```
 ┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│   codefind  │  HTTP   │   FastAPI   │         │   Ollama    │
-│     CLI     │────────▶│   Server    │────────▶│  (Embed)    │
-│   (Go)      │         │  (Python)   │         └─────────────┘
+│  codefind   │  HTTP   │   FastAPI   │         │   Ollama    │
+│    CLI      │────────▶│   Server    │────────▶│  (Embed)    │
+│    (Go)     │         │  (Python)   │         └─────────────┘
 └─────────────┘         └─────────────┘                │
                                │                       │
                                │                       ▼
