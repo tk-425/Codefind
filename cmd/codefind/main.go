@@ -298,7 +298,7 @@ func handleIndex() {
 	// Parse flags
 	indexCmd := flag.NewFlagSet("index", flag.ExitOnError)
 	windowOnly := indexCmd.Bool("window-only", false, "Force window-based chunking (skip LSP)")
-	concurrency := indexCmd.Int("concurrency", 2, "Number of concurrent batch requests (default: 2)")
+	concurrency := indexCmd.Int("concurrency", 1, "Number of concurrent batch requests (default: 1)")
 	
 	// Find where flags start (after "index" and optional path)
 	args := os.Args[2:] // Skip "codefind" and "index"
