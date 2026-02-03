@@ -947,10 +947,11 @@ func handleQuery(args []string) {
 			collection = manifest.RepoID
 			fmt.Printf("Searching in: %s\n", manifest.ProjectName)
 		} else {
-			// Current dir not indexed, search all with a note
-			fmt.Println("Note: Current directory not indexed, searching all projects")
+			// Current dir not indexed, exit with a note
+			fmt.Println("Note: Current directory not indexed.")
 			fmt.Println("      Use 'codefind index' to index this project")
 			fmt.Println()
+			os.Exit(1)
 		}
 	} else if qa.searchAll {
 		fmt.Println("Searching all projects")
