@@ -38,7 +38,11 @@ class AuditLogger:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
-        self.log_file = self.log_dir / "audit.log"
+        # Create logs subdirectory
+        self.logs_dir = self.log_dir / "logs"
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+
+        self.log_file = self.logs_dir / "audit.log"
 
         # Create logger
         self.logger = logging.getLogger("codefind.audit")
@@ -90,7 +94,7 @@ class AuditLogger:
         Returns:
             Formatted log string
         """
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = datetime.now(timezone.utc).strftime("[%Y-%m-%d %H:%M:%S]")
 
         # Build key=value pairs
         pairs = []
