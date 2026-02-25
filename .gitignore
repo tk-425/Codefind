@@ -8,14 +8,13 @@
 .codex/
 .gemini/
 .qwen/
+.opencode/
 CLAUDE.md
 GEMINI.md
 QWEN.md
 AGENTS.md
 .mcp.json
 
-# vmem
-.vmem/
 
 # Go binaries and executables
 *.exe
@@ -95,3 +94,6 @@ venv.bak/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# vmem
+.vmem/
