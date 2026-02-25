@@ -36,6 +36,7 @@ var ErrProjectNotInitialized = errors.New("project is not initialized in Codefin
 func main() {
 	// Define subcommands
 	if len(os.Args) < 2 {
+		printBanner()
 		printUsage()
 		os.Exit(1)
 	}
@@ -95,9 +96,11 @@ func main() {
 	case "version", "-v", "--version":
 		fmt.Printf("codefind v%s\n", Version)
 	case "help", "-h", "--help", "":
+		printBanner()
 		printUsage()
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
+		printBanner()
 		printUsage()
 		os.Exit(1)
 	}
@@ -297,6 +300,8 @@ func handleChunkFile() {
 func handleIndex() {
 	// Start timer
 	startTime := time.Now()
+	printBanner()
+	fmt.Println()
 
 	// Parse flags
 	indexCmd := flag.NewFlagSet("index", flag.ExitOnError)
@@ -1443,6 +1448,12 @@ func handleAuthStatus() {
 			fmt.Println("  Run 'codefind auth login' to set up")
 		}
 	}
+}
+
+func printBanner() {
+	fmt.Println(`┏━╸┏━┓╺┳┓┏━╸   ┏━╸╻┏┓╻╺┳┓
+┃  ┃ ┃ ┃┃┣╸ ╺━╸┣╸ ┃┃┗┫ ┃┃
+┗━╸┗━┛╺┻┛┗━╸   ╹  ╹╹ ╹╺┻┛`)
 }
 
 func printUsage() {
