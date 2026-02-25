@@ -205,6 +205,26 @@ func (ac *APIClient) GetStats(collection string) (*api.StatsResponse, error) {
 	return &statsResp, nil
 }
 
+// ListCollections retrieves all indexed collection names
+func (ac *APIClient) ListCollections() (*api.CollectionsResponse, error) {
+	resp, err := ac.get("/collections")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var collectionsResp api.CollectionsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&collectionsResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if collectionsResp.Error != "" {
+		return &collectionsResp, fmt.Errorf("server error: %s", collectionsResp.Error)
+	}
+
+	return &collectionsResp, nil
+}
+
 // post sends a POST request
 func (ac *APIClient) post(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
 	url := ac.baseURL + endpoint

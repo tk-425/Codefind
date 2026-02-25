@@ -144,6 +144,13 @@ type StatsResponse struct {
 	Error           string  `json:"error,omitempty"`
 }
 
+// --- Collections Endpoint ---
+
+type CollectionsResponse struct {
+	Collections []string `json:"collections"`
+	Error       string   `json:"error,omitempty"`
+}
+
 // --- Query Endpoint ---
 
 type QueryRequest struct {

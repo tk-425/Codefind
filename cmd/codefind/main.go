@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -28,7 +29,9 @@ import (
 	"golang.org/x/term"
 )
 
-const Version = "0.1.0"
+const Version = "0.1.1"
+
+var ErrProjectNotInitialized = errors.New("project is not initialized in Codefind/ChromaDB")
 
 func main() {
 	// Define subcommands
@@ -367,6 +370,29 @@ func handleIndex() {
 		Concurrency: *concurrency,
 	}
 
+	// Preflight: require project to already exist on server before indexing.
+	absRepoPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		fmt.Printf("Error: cannot resolve repository path: %v\n", err)
+		os.Exit(1)
+	}
+	repoID := indexer.GenerateRepoID(absRepoPath)
+	apiClient := client.NewAPIClient(cfg.ServerURL)
+	apiClient.SetAuthKey(authKey)
+	apiClient.SetEmail(email)
+
+	if err := ensureProjectInitialized(apiClient, repoID); err != nil {
+		if errors.Is(err, ErrProjectNotInitialized) {
+			fmt.Println("Error: project is not initialized in Codefind/ChromaDB.")
+			fmt.Printf("Repo: %s\n", repoID)
+			fmt.Printf("Path: %s\n", absRepoPath)
+			fmt.Println("Action: initialize/register this project first, then run `codefind index` again.")
+		} else {
+			fmt.Printf("Error: preflight project check failed: %v\n", err)
+		}
+		os.Exit(1)
+	}
+
 	idx := indexer.NewIndexer(indexOpts)
 	if err := idx.Index(); err != nil {
 		fmt.Printf("Indexing failed: %v\n", err)
@@ -376,6 +402,22 @@ func handleIndex() {
 	// Print duration
 	duration := time.Since(startTime)
 	fmt.Printf("\n⏱️  Total time: %.1fs\n", duration.Seconds())
+}
+
+// ensureProjectInitialized verifies that repoID already exists on the server.
+func ensureProjectInitialized(apiClient *client.APIClient, repoID string) error {
+	collectionsResp, err := apiClient.ListCollections()
+	if err != nil {
+		return fmt.Errorf("failed to list server collections: %w", err)
+	}
+
+	for _, collection := range collectionsResp.Collections {
+		if collection == repoID {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%w: %s", ErrProjectNotInitialized, repoID)
 }
 
 // handleCleanup handles the cleanup command for purging old deleted chunks
