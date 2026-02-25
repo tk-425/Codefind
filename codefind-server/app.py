@@ -92,6 +92,20 @@ async def health_check():
     )
 
 
+# --- Collections Endpoint ---
+
+
+@app.get("/collections")
+async def list_collections():
+    """List all indexed project collections."""
+    try:
+        chroma = ChromaDBService()
+        collections = chroma.list_collections()
+        return {"collections": collections, "error": ""}
+    except Exception as e:
+        return {"collections": [], "error": str(e)}
+
+
 # --- Tokenize Endpoint ---
 
 

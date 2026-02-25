@@ -100,3 +100,5 @@ htmlcov/
 
 # Local build artifacts
 codefind
+
+.codegraph/
