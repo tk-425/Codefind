@@ -97,3 +97,6 @@ htmlcov/
 
 # vmem
 .vmem/
+
+# Local build artifacts
+codefind
