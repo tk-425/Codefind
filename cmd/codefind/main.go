@@ -307,10 +307,10 @@ func handleIndex() {
 	indexCmd := flag.NewFlagSet("index", flag.ExitOnError)
 	windowOnly := indexCmd.Bool("window-only", false, "Force window-based chunking (skip LSP)")
 	concurrency := indexCmd.Int("concurrency", 1, "Number of concurrent batch requests (default: 1)")
-	
+
 	// Find where flags start (after "index" and optional path)
 	args := os.Args[2:] // Skip "codefind" and "index"
-	
+
 	// Separate path from flags
 	repoPath := "."
 	flagStart := 0
@@ -324,7 +324,7 @@ func handleIndex() {
 			flagStart = 1
 		}
 	}
-	
+
 	// Parse remaining flags
 	if flagStart < len(args) {
 		indexCmd.Parse(args[flagStart:])
@@ -1072,7 +1072,6 @@ func parseQueryArgs(args []string) queryArgs {
 	return qa
 }
 
-
 // saveLastResults saves results for 'codefind open' command
 func saveLastResults(resp *api.QueryResponse) error {
 	home, err := os.UserHomeDir()
@@ -1401,7 +1400,6 @@ func handleAuthLogin() {
 	fmt.Println("  Credentials stored securely in system keychain")
 }
 
-
 // handleAuthLogout removes auth credentials from the system keychain
 func handleAuthLogout() {
 	// Get email for display before deleting
@@ -1451,7 +1449,8 @@ func handleAuthStatus() {
 }
 
 func printBanner() {
-	fmt.Println(`┏━╸┏━┓╺┳┓┏━╸   ┏━╸╻┏┓╻╺┳┓
+	fmt.Println(`
+┏━╸┏━┓╺┳┓┏━╸   ┏━╸╻┏┓╻╺┳┓
 ┃  ┃ ┃ ┃┃┣╸ ╺━╸┣╸ ┃┃┗┫ ┃┃
 ┗━╸┗━┛╺┻┛┗━╸   ╹  ╹╹ ╹╺┻┛`)
 }
