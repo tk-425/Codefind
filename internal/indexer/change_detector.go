@@ -97,7 +97,7 @@ func DetectGitChanges(repoPath, lastCommit string) (*ChangeDetectionResult, erro
 	// M   file.go        (modified)
 	// D   file.go        (deleted)
 	// R100 old.go new.go (renamed with 100% similarity)
-	for _, line := range strings.Split(string(output), "\n") {
+	for line := range strings.SplitSeq(string(output), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
