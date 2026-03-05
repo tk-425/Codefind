@@ -67,6 +67,9 @@ func isIgnoredByGit(repoPath, filePath string) bool {
 
 	// Run git check-ignore command
 	// Returns exit code 0 if ignored, non-zero if not ignored
+	// Security: repoPath is validated by validateRepoPath above (absolute path, exists, is dir).
+	// relPath is derived from filepath.Rel — not user-controlled input.
+	// exec.Command uses an argument array, not a shell, so no shell injection is possible.
 	cmd := exec.Command("git", "-C", repoPath, "check-ignore", relPath)
 	err = cmd.Run()
 
