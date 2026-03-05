@@ -35,9 +35,13 @@ type Indexer struct {
 	manifest  *config.RepositoryManifest
 }
 
-// NewIndexer creates a new indexer
-func NewIndexer(opts IndexOptions) *Indexer {
-	apiClient := client.NewAPIClient(opts.ServerURL)
+// NewIndexer creates a new indexer. Returns an error if opts.ServerURL is not
+// an allowed host.
+func NewIndexer(opts IndexOptions) (*Indexer, error) {
+	apiClient, err := client.NewAPIClient(opts.ServerURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid server URL: %w", err)
+	}
 	apiClient.SetAuthKey(opts.AuthKey)
 	apiClient.SetEmail(opts.Email)
 	tokenizer := client.NewTokenizer(apiClient, opts.Model)
@@ -46,7 +50,7 @@ func NewIndexer(opts IndexOptions) *Indexer {
 		options:   opts,
 		client:    apiClient,
 		tokenizer: tokenizer,
-	}
+	}, nil
 }
 
 // Index performs a full or incremental index of the repository
