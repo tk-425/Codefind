@@ -55,6 +55,10 @@ func IsCodeFile(filePath string) bool {
 // isIgnoredByGit checks if a file is ignored by .gitignore
 // Only works if the path is within a git repository
 func isIgnoredByGit(repoPath, filePath string) bool {
+	if err := validateRepoPath(repoPath); err != nil {
+		return false
+	}
+
 	// Get relative path from repo root for git check-ignore
 	relPath, err := filepath.Rel(repoPath, filePath)
 	if err != nil {

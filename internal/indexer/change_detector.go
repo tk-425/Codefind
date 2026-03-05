@@ -50,6 +50,15 @@ func (c *ChangeDetectionResult) HasChanges() bool {
 
 // DetectGitChanges finds files changed since lastCommit using git diff
 func DetectGitChanges(repoPath, lastCommit string) (*ChangeDetectionResult, error) {
+	if err := validateRepoPath(repoPath); err != nil {
+		return nil, fmt.Errorf("invalid repoPath: %w", err)
+	}
+	if lastCommit != "" {
+		if err := validateCommitHash(lastCommit); err != nil {
+			return nil, fmt.Errorf("invalid lastCommit: %w", err)
+		}
+	}
+
 	result := &ChangeDetectionResult{
 		Added:      []string{},
 		Modified:   []string{},
@@ -131,6 +140,9 @@ func DetectGitChanges(repoPath, lastCommit string) (*ChangeDetectionResult, erro
 
 // getHeadCommit returns the current HEAD commit hash
 func getHeadCommit(repoPath string) (string, error) {
+	if err := validateRepoPath(repoPath); err != nil {
+		return "", fmt.Errorf("invalid repoPath: %w", err)
+	}
 	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "HEAD")
 	output, err := cmd.Output()
 	if err != nil {
