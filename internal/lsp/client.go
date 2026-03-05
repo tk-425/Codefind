@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/tk-425/Codefind/internal/pathutil"
 )
 
 // LSPClient manages communication with an LSP server
@@ -325,6 +327,14 @@ func (c *LSPClient) IsAlive() bool {
 
 // DocumentSymbols requests document symbols for a file
 func (c *LSPClient) DocumentSymbols(ctx context.Context, filePath string) ([]DocumentSymbol, error) {
+	ok, err := pathutil.IsWithinDir(filePath, c.rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate file path: %w", err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("file path outside repo root")
+	}
+
 	// Read file content
 	content, err := os.ReadFile(filePath)
 	if err != nil {

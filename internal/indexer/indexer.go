@@ -12,6 +12,7 @@ import (
 	"github.com/tk-425/Codefind/internal/chunker"
 	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
+	"github.com/tk-425/Codefind/internal/pathutil"
 	"github.com/tk-425/Codefind/pkg/api"
 )
 
@@ -188,6 +189,11 @@ func (idx *Indexer) indexFiles(filePaths []string) error {
 	for i, filePath := range filePaths {
 		// Read file
 		fullPath := filepath.Join(idx.options.RepoPath, filePath)
+		ok, err := pathutil.IsWithinDir(fullPath, idx.options.RepoPath)
+		if err != nil || !ok {
+			fmt.Printf("⚠️ Skipped %s: path outside repo root\n", filePath)
+			continue
+		}
 		content, err := os.ReadFile(fullPath)
 		if err != nil {
 			fmt.Printf("⚠️ Skipped %s: %v\n", filePath, err)
