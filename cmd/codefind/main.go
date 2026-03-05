@@ -29,7 +29,7 @@ import (
 	"golang.org/x/term"
 )
 
-const Version = "0.1.2"
+const Version = "0.1.3"
 
 var ErrProjectNotInitialized = errors.New("project is not initialized in Codefind/ChromaDB")
 
@@ -365,8 +365,17 @@ func handleIndex() {
 		os.Exit(1)
 	}
 	email, _ := keychain.GetEmail() // Email is optional for backward compatibility
+
+	// Resolve absolute path before building IndexOptions so that internal
+	// validators (which require an absolute repoPath) always receive one.
+	absRepoPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		fmt.Printf("Error: cannot resolve repository path: %v\n", err)
+		os.Exit(1)
+	}
+
 	indexOpts := indexer.IndexOptions{
-		RepoPath:    repoPath,
+		RepoPath:    absRepoPath,
 		ServerURL:   cfg.ServerURL,
 		AuthKey:     authKey,
 		Email:       email,
@@ -376,11 +385,6 @@ func handleIndex() {
 	}
 
 	// Preflight: require project to already exist on server before indexing.
-	absRepoPath, err := filepath.Abs(repoPath)
-	if err != nil {
-		fmt.Printf("Error: cannot resolve repository path: %v\n", err)
-		os.Exit(1)
-	}
 	repoID := indexer.GenerateRepoID(absRepoPath)
 	apiClient, err := client.NewAPIClient(cfg.ServerURL)
 	if err != nil {
