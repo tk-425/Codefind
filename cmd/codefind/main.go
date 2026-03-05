@@ -29,7 +29,7 @@ import (
 	"golang.org/x/term"
 )
 
-const Version = "0.1.1"
+const Version = "0.1.2"
 
 var ErrProjectNotInitialized = errors.New("project is not initialized in Codefind/ChromaDB")
 
@@ -382,7 +382,11 @@ func handleIndex() {
 		os.Exit(1)
 	}
 	repoID := indexer.GenerateRepoID(absRepoPath)
-	apiClient := client.NewAPIClient(cfg.ServerURL)
+	apiClient, err := client.NewAPIClient(cfg.ServerURL)
+	if err != nil {
+		fmt.Printf("Error: invalid server URL: %v\n", err)
+		os.Exit(1)
+	}
 	apiClient.SetAuthKey(authKey)
 	apiClient.SetEmail(email)
 
@@ -398,7 +402,11 @@ func handleIndex() {
 		os.Exit(1)
 	}
 
-	idx := indexer.NewIndexer(indexOpts)
+	idx, err := indexer.NewIndexer(indexOpts)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
 	if err := idx.Index(); err != nil {
 		fmt.Printf("Indexing failed: %v\n", err)
 		os.Exit(1)
@@ -464,7 +472,11 @@ func handleCleanup(args []string) {
 		os.Exit(1)
 	}
 	email, _ := keychain.GetEmail() // Optional for backward compatibility
-	apiClient := client.NewAPIClient(cfg.ServerURL)
+	apiClient, err := client.NewAPIClient(cfg.ServerURL)
+	if err != nil {
+		fmt.Printf("Error: invalid server URL: %v\n", err)
+		os.Exit(1)
+	}
 	apiClient.SetAuthKey(authKey)
 	apiClient.SetEmail(email)
 	cc := cleanup.NewCleanupClient(apiClient)
@@ -504,7 +516,11 @@ func handleStats(args []string) {
 	}
 
 	// Create API client and stats client
-	apiClient := client.NewAPIClient(cfg.ServerURL)
+	apiClient, err := client.NewAPIClient(cfg.ServerURL)
+	if err != nil {
+		fmt.Printf("Error: invalid server URL: %v\n", err)
+		os.Exit(1)
+	}
 	sc := stats.NewStatsClient(apiClient)
 
 	// Get stats
@@ -528,7 +544,11 @@ func handleHealth() {
 	}
 
 	// Create API client
-	apiClient := client.NewAPIClient(cfg.ServerURL)
+	apiClient, err := client.NewAPIClient(cfg.ServerURL)
+	if err != nil {
+		fmt.Printf("Error: invalid server URL: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Call health endpoint
 	healthResp, err := apiClient.Health()
@@ -1005,7 +1025,11 @@ func handleQuery(args []string) {
 	}
 
 	// Create API client and query client
-	apiClient := client.NewAPIClient(cfg.ServerURL)
+	apiClient, err := client.NewAPIClient(cfg.ServerURL)
+	if err != nil {
+		fmt.Printf("Error: invalid server URL: %v\n", err)
+		os.Exit(1)
+	}
 	qc := query.NewQueryClient(apiClient)
 
 	// Parse languages from comma-separated string
@@ -1322,7 +1346,11 @@ func handleClear(repoPath string) {
 		os.Exit(1)
 	}
 	email, _ := keychain.GetEmail() // Optional for backward compatibility
-	apiClient := client.NewAPIClient(globalCfg.ServerURL)
+	apiClient, err := client.NewAPIClient(globalCfg.ServerURL)
+	if err != nil {
+		fmt.Printf("Error: invalid server URL: %v\n", err)
+		os.Exit(1)
+	}
 	apiClient.SetAuthKey(authKey)
 	apiClient.SetEmail(email)
 

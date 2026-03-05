@@ -5,11 +5,74 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/tk-425/Codefind/pkg/api"
 )
+
+// privateRanges lists CIDR blocks considered private/local:
+// loopback, RFC 1918, and Tailscale CGNAT (100.64.0.0/10).
+var privateRanges []*net.IPNet
+
+func init() {
+	cidrs := []string{
+		"127.0.0.0/8",    // loopback
+		"10.0.0.0/8",     // RFC 1918
+		"172.16.0.0/12",  // RFC 1918
+		"192.168.0.0/16", // RFC 1918
+		"100.64.0.0/10",  // Tailscale CGNAT
+		"::1/128",        // IPv6 loopback
+	}
+	for _, cidr := range cidrs {
+		_, block, _ := net.ParseCIDR(cidr)
+		privateRanges = append(privateRanges, block)
+	}
+}
+
+// isAllowedHost returns true if host resolves to a private/local address.
+func isAllowedHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, block := range privateRanges {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateBaseURL returns an error if rawURL does not target an allowed host.
+func validateBaseURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid baseURL: %w", err)
+	}
+	if !isAllowedHost(u.Hostname()) {
+		return fmt.Errorf("baseURL host not allowed: %s", u.Hostname())
+	}
+	return nil
+}
+
+// buildURL concatenates baseURL and endpoint, then validates the resolved host.
+func buildURL(baseURL, endpoint string) (string, error) {
+	full := baseURL + endpoint
+	u, err := url.Parse(full)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+	if !isAllowedHost(u.Hostname()) {
+		return "", fmt.Errorf("resolved URL host not allowed")
+	}
+	return full, nil
+}
 
 // APIClient communicates with the Codefind server
 type APIClient struct {
@@ -19,14 +82,18 @@ type APIClient struct {
 	email   string
 }
 
-// NewAPIClient creates a new API client
-func NewAPIClient(baseURL string) *APIClient {
+// NewAPIClient creates a new API client. Returns an error if baseURL does not
+// target a private/local host (loopback, RFC 1918, or Tailscale CGNAT).
+func NewAPIClient(baseURL string) (*APIClient, error) {
+	if err := validateBaseURL(baseURL); err != nil {
+		return nil, err
+	}
 	return &APIClient{
 		baseURL: baseURL,
 		client: &http.Client{
 			Timeout: 5 * time.Minute, // 5 minutes for batch embedding and storage
 		},
-	}
+	}, nil
 }
 
 // SetAuthKey sets the authentication key for protected endpoints
@@ -227,7 +294,10 @@ func (ac *APIClient) ListCollections() (*api.CollectionsResponse, error) {
 
 // post sends a POST request
 func (ac *APIClient) post(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
-	url := ac.baseURL + endpoint
+	url, err := buildURL(ac.baseURL, endpoint)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	if err != nil {
@@ -259,7 +329,10 @@ func (ac *APIClient) post(endpoint string, data []byte, requireAuth bool) (*http
 
 // patch sends a PATCH request
 func (ac *APIClient) patch(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
-	url := ac.baseURL + endpoint
+	url, err := buildURL(ac.baseURL, endpoint)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequest("PATCH", url, bytes.NewBuffer(data))
 	if err != nil {
@@ -291,7 +364,10 @@ func (ac *APIClient) patch(endpoint string, data []byte, requireAuth bool) (*htt
 
 // get sends a GET request
 func (ac *APIClient) get(endpoint string) (*http.Response, error) {
-	url := ac.baseURL + endpoint
+	url, err := buildURL(ac.baseURL, endpoint)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -314,7 +390,10 @@ func (ac *APIClient) get(endpoint string) (*http.Response, error) {
 
 // delete sends a DELETE request
 func (ac *APIClient) delete(endpoint string) (*http.Response, error) {
-	url := ac.baseURL + endpoint
+	url, err := buildURL(ac.baseURL, endpoint)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
@@ -344,7 +423,10 @@ func (ac *APIClient) delete(endpoint string) (*http.Response, error) {
 
 // deleteWithBody sends a DELETE request with JSON body
 func (ac *APIClient) deleteWithBody(endpoint string, data []byte, requireAuth bool) (*http.Response, error) {
-	url := ac.baseURL + endpoint
+	url, err := buildURL(ac.baseURL, endpoint)
+	if err != nil {
+		return nil, err
+	}
 
 	req, err := http.NewRequest("DELETE", url, bytes.NewBuffer(data))
 	if err != nil {
