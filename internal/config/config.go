@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/tk-425/Codefind/internal/keychain"
+	"github.com/tk-425/Codefind/internal/pathutil"
 )
 
 // GlobalConfig represents the global configuration
@@ -108,6 +109,15 @@ func LoadManifest(repoID string) (*RepositoryManifest, error) {
 	manifestPath, err := ManifestPath(repoID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get manifest path: %w", err)
+	}
+
+	manifestsBase := filepath.Dir(manifestPath)
+	ok, err := pathutil.IsWithinDir(manifestPath, manifestsBase)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate manifest path: %w", err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("manifest path outside allowed directory")
 	}
 
 	data, err := os.ReadFile(manifestPath)
