@@ -12,7 +12,18 @@ class VectorPoint:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class SearchResult:
+    id: str
+    score: float
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
 class VectorStore(ABC):
+    @abstractmethod
+    async def healthcheck(self) -> bool:
+        raise NotImplementedError
+
     @abstractmethod
     async def upsert(self, collection: str, points: list[VectorPoint]) -> None:
         raise NotImplementedError
@@ -24,7 +35,7 @@ class VectorStore(ABC):
         vector: list[float],
         filters: dict[str, Any],
         top_k: int,
-    ) -> list[dict[str, Any]]:
+    ) -> list[SearchResult]:
         raise NotImplementedError
 
     @abstractmethod
@@ -51,3 +62,6 @@ class VectorStore(ABC):
     @abstractmethod
     async def count(self, collection: str, filters: dict[str, Any]) -> int:
         raise NotImplementedError
+
+    async def close(self) -> None:
+        return None

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any
 
-from fastapi import HTTPException, status
+import jwt
+from fastapi import Header, HTTPException, status
+from jwt import PyJWKClient
+
+from ..config import Settings, get_settings
 
 
 @dataclass(slots=True, frozen=True)
@@ -12,15 +18,91 @@ class OrgContext:
     user_id: str
 
 
-async def require_auth() -> OrgContext:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Phase 2: Clerk JWT auth not implemented yet",
-    )
+class TokenVerificationError(ValueError):
+    """Raised when a Clerk token cannot be verified."""
 
 
-async def require_admin() -> OrgContext:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Phase 2: Clerk admin auth not implemented yet",
+def extract_bearer(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Authorization header.",
+        )
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Authorization header.",
+        )
+    return token
+
+
+@lru_cache(maxsize=1)
+def get_jwk_client(jwks_url: str) -> PyJWKClient:
+    return PyJWKClient(jwks_url)
+
+
+def verify_clerk_token(token: str, settings: Settings) -> dict[str, Any]:
+    signing_key = get_jwk_client(settings.clerk_jwks_url).get_signing_key_from_jwt(token)
+    claims = jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256"],
+        issuer=settings.clerk_iss,
+        options={"require": ["exp", "iss", "sub"]},
     )
+    authorized_party = claims.get("azp")
+    if authorized_party != settings.clerk_azp:
+        raise TokenVerificationError("Invalid authorized party.")
+    return claims
+
+
+async def require_auth(authorization: str | None = Header(default=None)) -> OrgContext:
+    settings = get_settings()
+    token = extract_bearer(authorization)
+    try:
+        claims = verify_clerk_token(token, settings)
+    except HTTPException:
+        raise
+    except jwt.PyJWTError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token.",
+        ) from error
+    except TokenVerificationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(error),
+        ) from error
+
+    org_id = claims.get("org_id")
+    org_role = claims.get("org_role")
+    user_id = claims.get("sub")
+    if not org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No active organization.",
+        )
+    if org_role not in {"org:admin", "org:member"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No valid organization role.",
+        )
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing subject.",
+        )
+    return OrgContext(org_id=org_id, org_role=org_role, user_id=user_id)
+
+
+async def require_admin(
+    authorization: str | None = Header(default=None),
+) -> OrgContext:
+    context = await require_auth(authorization=authorization)
+    if context.org_role != "org:admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required.",
+        )
+    return context
