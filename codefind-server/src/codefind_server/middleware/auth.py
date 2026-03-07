@@ -5,10 +5,11 @@ from functools import lru_cache
 from typing import Any
 
 import jwt
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, status
 from jwt import PyJWKClient
 
 from ..config import Settings, get_settings
+from .request_context import set_request_identity
 
 
 @dataclass(slots=True, frozen=True)
@@ -57,7 +58,10 @@ def verify_clerk_token(token: str, settings: Settings) -> dict[str, Any]:
     return claims
 
 
-async def require_auth(authorization: str | None = Header(default=None)) -> OrgContext:
+async def require_auth(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> OrgContext:
     settings = get_settings()
     token = extract_bearer(authorization)
     try:
@@ -93,13 +97,17 @@ async def require_auth(authorization: str | None = Header(default=None)) -> OrgC
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token missing subject.",
         )
-    return OrgContext(org_id=org_id, org_role=org_role, user_id=user_id)
+    context = OrgContext(org_id=org_id, org_role=org_role, user_id=user_id)
+    request.state.org_context = context
+    set_request_identity(org_id=org_id, user_id=user_id, user_role=org_role)
+    return context
 
 
 async def require_admin(
+    request: Request,
     authorization: str | None = Header(default=None),
 ) -> OrgContext:
-    context = await require_auth(authorization=authorization)
+    context = await require_auth(request=request, authorization=authorization)
     if context.org_role != "org:admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
