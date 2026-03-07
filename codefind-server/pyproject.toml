@@ -7,11 +7,14 @@ authors = [
     { name = "trry", email = "54043933+tk-425@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi",
+    "pydantic",
+]
 
 [project.scripts]
 codefind-server = "codefind_server.main:main"
 
 [build-system]
-requires = ["uv_build>=0.9.18,<0.10.0"]
+requires = ["uv_build>=0.10.4,<0.11.0"]
 build-backend = "uv_build"
