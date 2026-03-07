@@ -13,6 +13,7 @@ dependencies = [
     "PyJWT[crypto]",
     "pydantic",
     "qdrant-client",
+    "sentry-sdk[fastapi]",
 ]
 
 [dependency-groups]
