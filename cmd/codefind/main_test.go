@@ -177,6 +177,114 @@ func TestAdminRemoveCommandCallsDelete(t *testing.T) {
 	}
 }
 
+func TestListCommandCallsCollectionsEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/collections" {
+			t.Fatalf("path = %q, want /collections", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"repo_id":"repo-a"}],"total_count":1}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "list")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestStatsCommandCallsStatsEndpoint(t *testing.T) {
+	var requestURI string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI = r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"repo_count":1,"chunk_count":12,"repos":[{"repo_id":"repo-a","chunk_count":12}]}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "stats", "--repo-id", "repo-a")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if requestURI != "/stats?repo_id=repo-a" {
+		t.Fatalf("requestURI = %q", requestURI)
+	}
+	if !strings.Contains(output, `"chunk_count": 12`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestQueryCommandPostsSearchRequest(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/query" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"chunk-1","score":0.9,"repo_id":"repo-a"}],"total_count":1,"page":1,"page_size":10,"has_more":false}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "query", "main", "--repo-id", "repo-a", "--lang", "go")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if requestBody["query_text"] != "main" || requestBody["repo_id"] != "repo-a" || requestBody["language"] != "go" {
+		t.Fatalf("request body = %#v", requestBody)
+	}
+	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestTokenizeCommandPostsText(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tokenize" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"bert-base-uncased","tokens":["alpha","beta"],"token_count":2}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "tokenize", "alpha beta")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if requestBody["text"] != "alpha beta" {
+		t.Fatalf("request body = %#v", requestBody)
+	}
+	if !strings.Contains(output, `"token_count": 2`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
 func TestLoadAuthenticatedClientRequiresStoredToken(t *testing.T) {
 	restore := useFakeTokenManager("", keychain.ErrNotFound)
 	defer restore()

@@ -1,5 +1,6 @@
 package stats
 
-type Summary struct {
-	Collections int
+type Options struct {
+	RepoID string
+	All    bool
 }

@@ -136,3 +136,69 @@ func TestClientCreateAdminInvitationSendsJSONBody(t *testing.T) {
 		t.Fatalf("response = %#v, want decoded invitation", response)
 	}
 }
+
+func TestClientGetCollectionsDecodesResponse(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/collections" {
+			t.Fatalf("path = %q, want /collections", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"repo_id":"repo-a"}],"total_count":1}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, nil)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	response, err := client.GetCollections(context.Background())
+	if err != nil {
+		t.Fatalf("GetCollections() error = %v", err)
+	}
+
+	if response.TotalCount != 1 || response.Data[0].RepoID != "repo-a" {
+		t.Fatalf("GetCollections() = %#v", response)
+	}
+}
+
+func TestClientQueryPostsJSONBody(t *testing.T) {
+	t.Parallel()
+
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		decoded, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		body = string(decoded)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"chunk-1","score":0.9,"repo_id":"repo-a"}],"total_count":1,"page":1,"page_size":10,"has_more":false}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, fakeTokenLoader{token: "token-123"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	response, err := client.Query(context.Background(), api.QueryRequest{
+		QueryText: "main",
+		RepoID:    "repo-a",
+		Page:      1,
+		PageSize:  10,
+		TopK:      10,
+	})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+
+	if body != `{"query_text":"main","repo_id":"repo-a","page":1,"page_size":10,"top_k":10}` {
+		t.Fatalf("body = %q", body)
+	}
+	if response.TotalCount != 1 || response.Data[0].RepoID != "repo-a" {
+		t.Fatalf("Query() = %#v", response)
+	}
+}

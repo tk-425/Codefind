@@ -24,6 +24,8 @@ class Settings:
     clerk_azp: str
     clerk_jwks_url: str
     clerk_secret_key: str
+    ollama_embed_model: str = "nomic-embed-text"
+    tokenizer_model: str = "bert-base-uncased"
     audit_log_path: str | None = None
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.0
@@ -54,6 +56,8 @@ class Settings:
             vector_store=os.getenv("VECTOR_STORE", ""),
             qdrant_url=os.getenv("QDRANT_URL", ""),
             ollama_url=os.getenv("OLLAMA_URL", ""),
+            ollama_embed_model=os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
+            tokenizer_model=os.getenv("TOKENIZER_MODEL", "bert-base-uncased"),
             clerk_iss=os.getenv("CLERK_ISS", ""),
             clerk_azp=os.getenv("CLERK_AZP", ""),
             clerk_jwks_url=os.getenv("CLERK_JWKS_URL", ""),

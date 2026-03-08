@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -51,6 +52,42 @@ func (c *Client) Health(ctx context.Context) (api.HealthResponse, error) {
 	var payload api.HealthResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/health", nil, http.StatusOK, &payload); err != nil {
 		return api.HealthResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) GetCollections(ctx context.Context) (api.CollectionListResponse, error) {
+	var payload api.CollectionListResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/collections", nil, http.StatusOK, &payload); err != nil {
+		return api.CollectionListResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) GetStats(ctx context.Context, repoID string) (api.StatsResponse, error) {
+	var payload api.StatsResponse
+	requestPath := "/stats"
+	if strings.TrimSpace(repoID) != "" {
+		requestPath += "?repo_id=" + url.QueryEscape(repoID)
+	}
+	if err := c.doJSON(ctx, http.MethodGet, requestPath, nil, http.StatusOK, &payload); err != nil {
+		return api.StatsResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) Query(ctx context.Context, request api.QueryRequest) (api.QueryResponse, error) {
+	var payload api.QueryResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/query", request, http.StatusOK, &payload); err != nil {
+		return api.QueryResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) Tokenize(ctx context.Context, request api.TokenizeRequest) (api.TokenizeResponse, error) {
+	var payload api.TokenizeResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/tokenize", request, http.StatusOK, &payload); err != nil {
+		return api.TokenizeResponse{}, err
 	}
 	return payload, nil
 }
