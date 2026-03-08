@@ -12,6 +12,7 @@ func TestSaveAndLoadConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), ".codefind", "config.json")
 	input := Config{
 		ServerURL:   "http://127.0.0.1:8080",
+		WebAppURL:   "http://localhost:5173",
 		ActiveOrgID: "org_123",
 		Editor:      "nvim",
 	}
@@ -48,5 +49,14 @@ func TestLoadOrDefaultMissingFile(t *testing.T) {
 	}
 	if cfg != (Config{}) {
 		t.Fatalf("config = %#v, want zero value", cfg)
+	}
+}
+
+func TestDisplayMapIncludesWebAppURL(t *testing.T) {
+	t.Parallel()
+
+	display := Config{}.DisplayMap()
+	if display["web_app_url"] != "<unset>" {
+		t.Fatalf("web_app_url display = %q, want <unset>", display["web_app_url"])
 	}
 }

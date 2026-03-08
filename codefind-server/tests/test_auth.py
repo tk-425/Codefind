@@ -31,6 +31,7 @@ class DummyJwkClient:
 def settings() -> Settings:
     return Settings(
         environment="test",
+        web_app_url="http://localhost:5173",
         vector_store="qdrant",
         qdrant_url="http://localhost:6333",
         ollama_url="http://localhost:11434",
@@ -64,6 +65,20 @@ def _build_token(private_key: bytes, settings: Settings, **claims: str) -> str:
         "exp": datetime.now(UTC) + timedelta(minutes=5),
     }
     payload.update(claims)
+    return jwt.encode(payload, private_key, algorithm="RS256")
+
+
+def _build_v2_token(private_key: bytes, settings: Settings, *, org_id: str = "org_123", org_role: str = "admin") -> str:
+    payload = {
+        "sub": "user_123",
+        "iss": settings.clerk_iss,
+        "azp": settings.clerk_azp,
+        "exp": datetime.now(UTC) + timedelta(minutes=5),
+        "o": {
+            "id": org_id,
+            "rol": org_role,
+        },
+    }
     return jwt.encode(payload, private_key, algorithm="RS256")
 
 
@@ -176,3 +191,28 @@ def test_require_admin_rejects_member_role(
         response = client.get("/admin", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 403
+
+
+def test_require_auth_accepts_v2_nested_org_claims(
+    monkeypatch: pytest.MonkeyPatch,
+    settings: Settings,
+    rsa_keys: tuple[bytes, object],
+):
+    private_key, public_key = rsa_keys
+    token = _build_v2_token(private_key, settings)
+
+    monkeypatch.setattr(
+        "codefind_server.middleware.auth.get_settings",
+        lambda: settings,
+    )
+    monkeypatch.setattr(
+        "codefind_server.middleware.auth.get_jwk_client",
+        lambda _url: DummyJwkClient(public_key),
+    )
+
+    app = _make_app()
+    with TestClient(app) as client:
+        response = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}

@@ -11,7 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from ..config import Settings
-from .auth import extract_bearer, verify_clerk_token
+from .auth import extract_bearer, extract_org_context, verify_clerk_token
 
 
 @dataclass(slots=True, frozen=True)
@@ -51,7 +51,7 @@ async def default_identity_resolver(request: Request) -> RateLimitIdentity | Non
         claims = verify_clerk_token(token, request.app.state.settings)
     except Exception:
         return None
-    org_id = claims.get("org_id")
+    org_id, _org_role = extract_org_context(claims)
     user_id = claims.get("sub")
     if not org_id or not user_id:
         return None

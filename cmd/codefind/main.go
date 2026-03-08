@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tk-425/Codefind/internal/authflow"
 	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/keychain"
@@ -53,6 +55,7 @@ and install globally with the documented /usr/local/bin flow.`),
 
 	rootCmd.AddCommand(newConfigCommand(&configPath))
 	rootCmd.AddCommand(newHealthCommand(&configPath))
+	rootCmd.AddCommand(newAuthCommand(&configPath))
 
 	return rootCmd
 }
@@ -61,6 +64,7 @@ func newConfigCommand(configPath *string) *cobra.Command {
 	var (
 		show        bool
 		serverURL   string
+		webAppURL   string
 		activeOrgID string
 		editor      string
 	)
@@ -69,7 +73,7 @@ func newConfigCommand(configPath *string) *cobra.Command {
 		Use:   "config",
 		Short: "Show or update CLI configuration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			hasUpdates := strings.TrimSpace(serverURL) != "" || strings.TrimSpace(activeOrgID) != "" || strings.TrimSpace(editor) != ""
+			hasUpdates := strings.TrimSpace(serverURL) != "" || strings.TrimSpace(webAppURL) != "" || strings.TrimSpace(activeOrgID) != "" || strings.TrimSpace(editor) != ""
 			if show {
 				if hasUpdates {
 					return errors.New("--show cannot be combined with update flags")
@@ -79,12 +83,13 @@ func newConfigCommand(configPath *string) *cobra.Command {
 			if !hasUpdates {
 				return cmd.Help()
 			}
-			return runConfigUpdate(cmd.OutOrStdout(), *configPath, serverURL, activeOrgID, editor)
+			return runConfigUpdate(cmd.OutOrStdout(), *configPath, serverURL, webAppURL, activeOrgID, editor)
 		},
 	}
 
 	configCmd.Flags().BoolVar(&show, "show", false, "show current config")
 	configCmd.Flags().StringVar(&serverURL, "server-url", "", "set the server URL")
+	configCmd.Flags().StringVar(&webAppURL, "web-app-url", "", "set the local web app URL")
 	configCmd.Flags().StringVar(&activeOrgID, "active-org-id", "", "set the active org ID")
 	configCmd.Flags().StringVar(&editor, "editor", "", "set the preferred editor")
 
@@ -119,6 +124,156 @@ func newHealthCommand(configPath *string) *cobra.Command {
 	}
 }
 
+func newAuthCommand(configPath *string) *cobra.Command {
+	authCmd := &cobra.Command{
+		Use:   "auth",
+		Short: "Manage CLI authentication",
+	}
+
+	authCmd.AddCommand(newAuthLoginCommand(configPath))
+	authCmd.AddCommand(newAuthLogoutCommand(configPath))
+	authCmd.AddCommand(newAuthStatusCommand(configPath))
+
+	return authCmd
+}
+
+func newAuthLoginCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "login",
+		Short: "Open the browser and authenticate with Clerk",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := loadRequiredConfig(*configPath)
+			if err != nil {
+				return err
+			}
+			if cfg.ServerURL == "" {
+				return errors.New("server_url is not configured; run 'codefind config --server-url <url>'")
+			}
+			webAppURL := cfg.WebAppURL
+			if webAppURL == "" {
+				webAppURL = "http://localhost:5173"
+			}
+
+			listener, err := authflow.NewLocalCallbackListener()
+			if err != nil {
+				return err
+			}
+			defer listener.Close()
+
+			ctx, cancel := context.WithTimeout(cmd.Context(), authflow.LoginTimeout())
+			defer cancel()
+
+			redirectURI, waitForToken, err := authflow.StartCallbackServer(ctx, listener, webAppURL)
+			if err != nil {
+				return err
+			}
+
+			signInURL, err := authflow.BuildSignInURL(cfg.ServerURL, redirectURI)
+			if err != nil {
+				return err
+			}
+
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "opening browser: %s\n", signInURL); err != nil {
+				return err
+			}
+			if err := authflow.DefaultBrowserOpener(signInURL); err != nil {
+				return fmt.Errorf("open browser manually with %s: %w", signInURL, err)
+			}
+
+			token, err := waitForToken()
+			if err != nil {
+				return err
+			}
+
+			manager := keychain.DefaultManager()
+			if err := manager.SaveToken(token); err != nil {
+				return err
+			}
+
+			if claims, err := authflow.DecodeTokenClaims(token); err == nil {
+				cfg.ActiveOrgID = claims.OrgID
+			} else {
+				cfg.ActiveOrgID = ""
+			}
+			if err := config.Save(*configPath, cfg); err != nil {
+				return err
+			}
+
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "authentication stored in keychain")
+			return err
+		},
+	}
+}
+
+func newAuthLogoutCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout",
+		Short: "Delete the stored CLI token",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			manager := keychain.DefaultManager()
+			err := manager.DeleteToken()
+			if err != nil && !errors.Is(err, keychain.ErrNotFound) {
+				return err
+			}
+
+			cfg, loadErr := config.LoadOrDefault(*configPath)
+			if loadErr != nil {
+				return loadErr
+			}
+			cfg.ActiveOrgID = ""
+			if saveErr := config.Save(*configPath, cfg); saveErr != nil {
+				return saveErr
+			}
+
+			if errors.Is(err, keychain.ErrNotFound) {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), "no stored token was present")
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "stored token deleted")
+			return err
+		},
+	}
+}
+
+func newAuthStatusCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show CLI authentication status",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := config.LoadOrDefault(*configPath)
+			if err != nil {
+				return err
+			}
+
+			status := map[string]any{
+				"authenticated": false,
+				"active_org_id": cfg.DisplayMap()["active_org_id"],
+			}
+
+			token, err := keychain.DefaultManager().LoadToken()
+			if err != nil {
+				if errors.Is(err, keychain.ErrNotFound) {
+					return writeJSON(cmd.OutOrStdout(), status)
+				}
+				return err
+			}
+
+			status["authenticated"] = true
+			if claims, err := authflow.DecodeTokenClaims(token); err == nil {
+				if claims.OrgID != "" {
+					status["token_org_id"] = claims.OrgID
+				}
+			}
+			if expiry, err := authflow.TokenExpiryTime(token); err == nil {
+				status["expires_at"] = expiry.Format(time.RFC3339)
+				status["expired"] = time.Now().UTC().After(expiry)
+			}
+
+			return writeJSON(cmd.OutOrStdout(), status)
+		},
+	}
+}
+
 func runConfigShow(stdout io.Writer, path string) error {
 	cfg, err := config.LoadOrDefault(path)
 	if err != nil {
@@ -127,7 +282,7 @@ func runConfigShow(stdout io.Writer, path string) error {
 	return writeJSON(stdout, cfg.DisplayMap())
 }
 
-func runConfigUpdate(stdout io.Writer, path, serverURL, activeOrgID, editor string) error {
+func runConfigUpdate(stdout io.Writer, path, serverURL, webAppURL, activeOrgID, editor string) error {
 	cfg, err := config.LoadOrDefault(path)
 	if err != nil {
 		return err
@@ -135,6 +290,9 @@ func runConfigUpdate(stdout io.Writer, path, serverURL, activeOrgID, editor stri
 
 	if strings.TrimSpace(serverURL) != "" {
 		cfg.ServerURL = serverURL
+	}
+	if strings.TrimSpace(webAppURL) != "" {
+		cfg.WebAppURL = webAppURL
 	}
 	if strings.TrimSpace(activeOrgID) != "" {
 		cfg.ActiveOrgID = activeOrgID
