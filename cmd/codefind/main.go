@@ -16,6 +16,8 @@ import (
 	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/keychain"
+	"github.com/tk-425/Codefind/internal/query"
+	"github.com/tk-425/Codefind/internal/stats"
 	"github.com/tk-425/Codefind/pkg/api"
 )
 
@@ -40,9 +42,10 @@ func newRootCommand() *cobra.Command {
 		Short: "Code-Find v2 CLI",
 		Long: strings.TrimSpace(`Code-Find v2 CLI foundation.
 
-Use 'codefind config' to set or show local CLI config, and 'codefind health'
-to check the configured server. Build with 'go build -o ./bin/codefind ./cmd/codefind'
-and install globally with the documented /usr/local/bin flow.`),
+Use 'codefind auth', 'codefind org', 'codefind admin', 'codefind list',
+'codefind stats', and 'codefind query' against the configured server.
+Build with 'go build -o ./bin/codefind ./cmd/codefind' and install
+globally with the documented /usr/local/bin flow.`),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
@@ -65,6 +68,10 @@ and install globally with the documented /usr/local/bin flow.`),
 	rootCmd.AddCommand(newAuthCommand(&configPath))
 	rootCmd.AddCommand(newOrgCommand(&configPath))
 	rootCmd.AddCommand(newAdminCommand(&configPath))
+	rootCmd.AddCommand(newListCommand(&configPath))
+	rootCmd.AddCommand(newStatsCommand(&configPath))
+	rootCmd.AddCommand(newQueryCommand(&configPath))
+	rootCmd.AddCommand(newTokenizeCommand(&configPath))
 
 	return rootCmd
 }
@@ -261,6 +268,123 @@ func newAdminRemoveCommand(configPath *string) *cobra.Command {
 			}
 
 			response, err := apiClient.RemoveAdminMember(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+}
+
+func newListCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List indexed repos available to the current organization",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			apiClient, err := loadAuthenticatedClient(*configPath)
+			if err != nil {
+				return err
+			}
+			response, err := apiClient.GetCollections(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+}
+
+func newStatsCommand(configPath *string) *cobra.Command {
+	var options stats.Options
+
+	command := &cobra.Command{
+		Use:   "stats",
+		Short: "Show chunk stats for a repo or the whole active organization",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if options.All && strings.TrimSpace(options.RepoID) != "" {
+				return errors.New("--all cannot be combined with --repo-id")
+			}
+
+			apiClient, err := loadAuthenticatedClient(*configPath)
+			if err != nil {
+				return err
+			}
+
+			repoID := ""
+			if !options.All {
+				repoID = strings.TrimSpace(options.RepoID)
+			}
+			response, err := apiClient.GetStats(cmd.Context(), repoID)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+
+	command.Flags().StringVar(&options.RepoID, "repo-id", "", "repo identifier to inspect")
+	command.Flags().BoolVar(&options.All, "all", false, "show org-wide stats")
+	return command
+}
+
+func newQueryCommand(configPath *string) *cobra.Command {
+	var options query.Options
+
+	command := &cobra.Command{
+		Use:   "query <text>",
+		Short: "Search the current organization or a specific repo",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if options.All && strings.TrimSpace(options.RepoID) != "" {
+				return errors.New("--all cannot be combined with --repo-id")
+			}
+
+			apiClient, err := loadAuthenticatedClient(*configPath)
+			if err != nil {
+				return err
+			}
+
+			payload := api.QueryRequest{
+				QueryText: args[0],
+				Project:   strings.TrimSpace(options.Project),
+				Language:  strings.TrimSpace(options.Language),
+				Page:      options.Page,
+				PageSize:  options.PageSize,
+				TopK:      options.TopK,
+			}
+			if !options.All {
+				payload.RepoID = strings.TrimSpace(options.RepoID)
+			}
+
+			response, err := apiClient.Query(cmd.Context(), payload)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+
+	command.Flags().StringVar(&options.RepoID, "repo-id", "", "repo identifier to search")
+	command.Flags().StringVar(&options.Project, "project", "", "exact project filter")
+	command.Flags().StringVar(&options.Language, "lang", "", "exact language filter")
+	command.Flags().BoolVar(&options.All, "all", false, "search all repos in the current org")
+	command.Flags().IntVar(&options.Page, "page", 1, "1-based result page")
+	command.Flags().IntVar(&options.PageSize, "page-size", 10, "results per page")
+	command.Flags().IntVar(&options.TopK, "top-k", 10, "per-collection match limit before pagination")
+	return command
+}
+
+func newTokenizeCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "tokenize <text>",
+		Short: "Tokenize text using the server tokenizer",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			apiClient, err := loadAuthenticatedClient(*configPath)
+			if err != nil {
+				return err
+			}
+			response, err := apiClient.Tokenize(cmd.Context(), api.TokenizeRequest{Text: args[0]})
 			if err != nil {
 				return err
 			}

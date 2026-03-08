@@ -52,3 +52,52 @@ class OrganizationInvitationResponse(BaseModel):
 class OrganizationInvitationListResponse(BaseModel):
     data: list[OrganizationInvitationResponse]
     total_count: int
+
+
+class CollectionSummaryResponse(BaseModel):
+    repo_id: str
+
+
+class CollectionListResponse(BaseModel):
+    data: list[CollectionSummaryResponse]
+    total_count: int
+
+
+class RepoStatsResponse(BaseModel):
+    repo_id: str
+    chunk_count: int
+
+
+class StatsResponse(BaseModel):
+    repo_id: str | None = None
+    repo_count: int
+    chunk_count: int
+    repos: list[RepoStatsResponse]
+
+
+class QueryResultResponse(BaseModel):
+    id: str
+    score: float
+    repo_id: str
+    project: str | None = None
+    language: str | None = None
+    path: str | None = None
+    snippet: str | None = None
+    content: str | None = None
+    page: int | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+
+
+class QueryResponse(BaseModel):
+    data: list[QueryResultResponse]
+    total_count: int
+    page: int
+    page_size: int
+    has_more: bool
+
+
+class TokenizeResponse(BaseModel):
+    model: str
+    tokens: list[str]
+    token_count: int

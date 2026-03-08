@@ -55,3 +55,66 @@ type CreateOrganizationInvitationRequest struct {
 	EmailAddress string `json:"email_address"`
 	Role         string `json:"role"`
 }
+
+type CollectionSummary struct {
+	RepoID string `json:"repo_id"`
+}
+
+type CollectionListResponse struct {
+	Data       []CollectionSummary `json:"data"`
+	TotalCount int                 `json:"total_count"`
+}
+
+type RepoStats struct {
+	RepoID     string `json:"repo_id"`
+	ChunkCount int    `json:"chunk_count"`
+}
+
+type StatsResponse struct {
+	RepoID     string      `json:"repo_id,omitempty"`
+	RepoCount  int         `json:"repo_count"`
+	ChunkCount int         `json:"chunk_count"`
+	Repos      []RepoStats `json:"repos"`
+}
+
+type QueryRequest struct {
+	QueryText string `json:"query_text"`
+	RepoID    string `json:"repo_id,omitempty"`
+	Project   string `json:"project,omitempty"`
+	Language  string `json:"language,omitempty"`
+	Page      int    `json:"page"`
+	PageSize  int    `json:"page_size"`
+	TopK      int    `json:"top_k"`
+}
+
+type QueryResult struct {
+	ID        string  `json:"id"`
+	Score     float64 `json:"score"`
+	RepoID    string  `json:"repo_id"`
+	Project   string  `json:"project,omitempty"`
+	Language  string  `json:"language,omitempty"`
+	Path      string  `json:"path,omitempty"`
+	Snippet   string  `json:"snippet,omitempty"`
+	Content   string  `json:"content,omitempty"`
+	Page      int     `json:"page,omitempty"`
+	StartLine int     `json:"start_line,omitempty"`
+	EndLine   int     `json:"end_line,omitempty"`
+}
+
+type QueryResponse struct {
+	Data       []QueryResult `json:"data"`
+	TotalCount int           `json:"total_count"`
+	Page       int           `json:"page"`
+	PageSize   int           `json:"page_size"`
+	HasMore    bool          `json:"has_more"`
+}
+
+type TokenizeRequest struct {
+	Text string `json:"text"`
+}
+
+type TokenizeResponse struct {
+	Model      string   `json:"model"`
+	Tokens     []string `json:"tokens"`
+	TokenCount int      `json:"token_count"`
+}
