@@ -1,9 +1,11 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -46,31 +48,58 @@ func NewWithHTTPClient(baseURL string, tokenStore TokenLoader, httpClient *http.
 }
 
 func (c *Client) Health(ctx context.Context) (api.HealthResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/health")
-	if err != nil {
+	var payload api.HealthResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/health", nil, http.StatusOK, &payload); err != nil {
 		return api.HealthResponse{}, err
 	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return api.HealthResponse{}, fmt.Errorf("request /health: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return api.HealthResponse{}, fmt.Errorf("health request failed: %s", resp.Status)
-	}
-
-	var payload api.HealthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return api.HealthResponse{}, fmt.Errorf("decode health response: %w", err)
-	}
-
 	return payload, nil
 }
 
-func (c *Client) newRequest(ctx context.Context, method, requestPath string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+requestPath, nil)
+func (c *Client) GetOrganizations(ctx context.Context) (api.OrgListResponse, error) {
+	var payload api.OrgListResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/orgs", nil, http.StatusOK, &payload); err != nil {
+		return api.OrgListResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) GetAdminMembers(ctx context.Context) (api.OrganizationMemberListResponse, error) {
+	var payload api.OrganizationMemberListResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/admin/members", nil, http.StatusOK, &payload); err != nil {
+		return api.OrganizationMemberListResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) GetAdminInvitations(ctx context.Context) (api.OrganizationInvitationListResponse, error) {
+	var payload api.OrganizationInvitationListResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/admin/invitations", nil, http.StatusOK, &payload); err != nil {
+		return api.OrganizationInvitationListResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) CreateAdminInvitation(
+	ctx context.Context,
+	request api.CreateOrganizationInvitationRequest,
+) (api.OrganizationInvitation, error) {
+	var payload api.OrganizationInvitation
+	if err := c.doJSON(ctx, http.MethodPost, "/admin/invite", request, http.StatusCreated, &payload); err != nil {
+		return api.OrganizationInvitation{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) RemoveAdminMember(ctx context.Context, userID string) (api.OrganizationMember, error) {
+	var payload api.OrganizationMember
+	if err := c.doJSON(ctx, http.MethodDelete, "/admin/members/"+userID, nil, http.StatusOK, &payload); err != nil {
+		return api.OrganizationMember{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) newRequest(ctx context.Context, method, requestPath string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+requestPath, body)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -92,4 +121,47 @@ func (c *Client) newRequest(ctx context.Context, method, requestPath string) (*h
 	}
 
 	return req, nil
+}
+
+func (c *Client) doJSON(
+	ctx context.Context,
+	method string,
+	requestPath string,
+	requestBody any,
+	expectedStatus int,
+	out any,
+) error {
+	var body io.Reader
+	if requestBody != nil {
+		encoded, err := json.Marshal(requestBody)
+		if err != nil {
+			return fmt.Errorf("encode request body: %w", err)
+		}
+		body = bytes.NewReader(encoded)
+	}
+
+	req, err := c.newRequest(ctx, method, requestPath, body)
+	if err != nil {
+		return err
+	}
+	if requestBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request %s %s: %w", method, requestPath, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != expectedStatus {
+		return fmt.Errorf("%s %s failed: %s", method, requestPath, resp.Status)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("decode %s response: %w", requestPath, err)
+	}
+	return nil
 }

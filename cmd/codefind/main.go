@@ -16,6 +16,13 @@ import (
 	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/keychain"
+	"github.com/tk-425/Codefind/pkg/api"
+)
+
+var (
+	newAPIClient        = client.New
+	defaultTokenManager = keychain.DefaultManager
+	defaultPathResolver = config.DefaultPath
 )
 
 func main() {
@@ -44,7 +51,7 @@ and install globally with the documented /usr/local/bin flow.`),
 		if configPath != "" {
 			return nil
 		}
-		defaultPath, err := config.DefaultPath()
+		defaultPath, err := defaultPathResolver()
 		if err != nil {
 			return err
 		}
@@ -56,6 +63,8 @@ and install globally with the documented /usr/local/bin flow.`),
 	rootCmd.AddCommand(newConfigCommand(&configPath))
 	rootCmd.AddCommand(newHealthCommand(&configPath))
 	rootCmd.AddCommand(newAuthCommand(&configPath))
+	rootCmd.AddCommand(newOrgCommand(&configPath))
+	rootCmd.AddCommand(newAdminCommand(&configPath))
 
 	return rootCmd
 }
@@ -109,7 +118,7 @@ func newHealthCommand(configPath *string) *cobra.Command {
 				return errors.New("server_url is not configured; run 'codefind config --server-url <url>'")
 			}
 
-			apiClient, err := client.New(cfg.ServerURL, keychain.DefaultManager())
+			apiClient, err := newAPIClient(cfg.ServerURL, defaultTokenManager())
 			if err != nil {
 				return err
 			}
@@ -135,6 +144,129 @@ func newAuthCommand(configPath *string) *cobra.Command {
 	authCmd.AddCommand(newAuthStatusCommand(configPath))
 
 	return authCmd
+}
+
+func newOrgCommand(configPath *string) *cobra.Command {
+	orgCmd := &cobra.Command{
+		Use:   "org",
+		Short: "Inspect organization access for the current token",
+	}
+	orgCmd.AddCommand(newOrgListCommand(configPath))
+	return orgCmd
+}
+
+func newOrgListCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List organizations available to the authenticated user",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			apiClient, err := loadAuthenticatedClient(*configPath)
+			if err != nil {
+				return err
+			}
+
+			response, err := apiClient.GetOrganizations(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+}
+
+func newAdminCommand(configPath *string) *cobra.Command {
+	adminCmd := &cobra.Command{
+		Use:   "admin",
+		Short: "Manage organization members and invitations for the current token org",
+	}
+	adminCmd.AddCommand(newAdminListCommand(configPath))
+	adminCmd.AddCommand(newAdminInviteCommand(configPath))
+	adminCmd.AddCommand(newAdminRemoveCommand(configPath))
+	return adminCmd
+}
+
+func newAdminListCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List members and invitations for the active token organization",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			apiClient, err := loadAuthenticatedClient(*configPath)
+			if err != nil {
+				return err
+			}
+
+			members, err := apiClient.GetAdminMembers(cmd.Context())
+			if err != nil {
+				return err
+			}
+			invitations, err := apiClient.GetAdminInvitations(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			return writeJSON(cmd.OutOrStdout(), map[string]any{
+				"members":     members,
+				"invitations": invitations,
+			})
+		},
+	}
+}
+
+func newAdminInviteCommand(configPath *string) *cobra.Command {
+	var (
+		email string
+		role  string
+	)
+
+	command := &cobra.Command{
+		Use:   "invite",
+		Short: "Invite a user into the current token organization",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(email) == "" {
+				return errors.New("--email is required")
+			}
+			if role != "org:admin" && role != "org:member" {
+				return errors.New("--role must be org:admin or org:member")
+			}
+
+			apiClient, err := loadAuthenticatedClient(*configPath)
+			if err != nil {
+				return err
+			}
+
+			response, err := apiClient.CreateAdminInvitation(cmd.Context(), api.CreateOrganizationInvitationRequest{
+				EmailAddress: email,
+				Role:         role,
+			})
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+	command.Flags().StringVar(&email, "email", "", "email address to invite")
+	command.Flags().StringVar(&role, "role", "org:member", "organization role for the invitee")
+	return command
+}
+
+func newAdminRemoveCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <user-id>",
+		Short: "Remove a member from the current token organization",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			apiClient, err := loadAuthenticatedClient(*configPath)
+			if err != nil {
+				return err
+			}
+
+			response, err := apiClient.RemoveAdminMember(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
 }
 
 func newAuthLoginCommand(configPath *string) *cobra.Command {
@@ -185,7 +317,7 @@ func newAuthLoginCommand(configPath *string) *cobra.Command {
 				return err
 			}
 
-			manager := keychain.DefaultManager()
+			manager := defaultTokenManager()
 			if err := manager.SaveToken(token); err != nil {
 				return err
 			}
@@ -210,7 +342,7 @@ func newAuthLogoutCommand(configPath *string) *cobra.Command {
 		Use:   "logout",
 		Short: "Delete the stored CLI token",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			manager := keychain.DefaultManager()
+			manager := defaultTokenManager()
 			err := manager.DeleteToken()
 			if err != nil && !errors.Is(err, keychain.ErrNotFound) {
 				return err
@@ -250,7 +382,7 @@ func newAuthStatusCommand(configPath *string) *cobra.Command {
 				"active_org_id": cfg.DisplayMap()["active_org_id"],
 			}
 
-			token, err := keychain.DefaultManager().LoadToken()
+			token, err := defaultTokenManager().LoadToken()
 			if err != nil {
 				if errors.Is(err, keychain.ErrNotFound) {
 					return writeJSON(cmd.OutOrStdout(), status)
@@ -322,6 +454,29 @@ func loadRequiredConfig(path string) (config.Config, error) {
 		return config.Config{}, fmt.Errorf("config file not found at %s; run 'codefind config --server-url <url>'", path)
 	}
 	return config.Config{}, err
+}
+
+func loadAuthenticatedClient(path string) (*client.Client, error) {
+	cfg, err := loadRequiredConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.ServerURL == "" {
+		return nil, errors.New("server_url is not configured; run 'codefind config --server-url <url>'")
+	}
+
+	token, err := defaultTokenManager().LoadToken()
+	if err != nil {
+		if errors.Is(err, keychain.ErrNotFound) {
+			return nil, errors.New("not authenticated; run 'codefind auth login'")
+		}
+		return nil, err
+	}
+	if strings.TrimSpace(token) == "" {
+		return nil, errors.New("stored token is empty; run 'codefind auth login'")
+	}
+
+	return newAPIClient(cfg.ServerURL, defaultTokenManager())
 }
 
 func writeJSON(stdout io.Writer, value any) error {
