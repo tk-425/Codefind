@@ -47,7 +47,14 @@ export function SignInPage() {
         if (!redirectUri) {
           throw new Error('The CLI callback URL is missing.')
         }
-        const token = await getToken()
+        let token: string | null
+        try {
+          token = await getToken({ template: 'codefind_cli' })
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : 'Clerk failed to mint the codefind_cli token.'
+          throw new Error(`Template token request failed: ${message}`)
+        }
         if (!token) {
           throw new Error('No Clerk session token was available for the CLI callback.')
         }
@@ -57,7 +64,6 @@ export function SignInPage() {
           setCliStatus('done')
         }
       } catch (error) {
-        clearStoredCliRedirectUri()
         if (!cancelled) {
           setCliStatus('error')
           setErrorMessage(error instanceof Error ? error.message : 'CLI token handoff failed.')
@@ -105,6 +111,12 @@ export function SignInPage() {
         <CardContent className="space-y-4">
         {cliStatus === 'done' ? (
           <p className="text-sm text-slate-600">The CLI callback accepted the posted token.</p>
+        ) : cliStatus === 'error' ? (
+          <p className="text-sm text-slate-600">
+            The CLI token handoff failed. Review the error below before retrying this login flow.
+          </p>
+        ) : isSignedIn ? (
+          <p className="text-sm text-slate-600">Finishing CLI sign-in and returning your token…</p>
         ) : (
           <SignIn />
         )}
