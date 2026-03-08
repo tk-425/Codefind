@@ -23,6 +23,24 @@ class TokenVerificationError(ValueError):
     """Raised when a Clerk token cannot be verified."""
 
 
+def extract_org_context(claims: dict[str, Any]) -> tuple[str | None, str | None]:
+    org_id = claims.get("org_id")
+    org_role = claims.get("org_role")
+    nested_org = claims.get("o")
+    if isinstance(nested_org, dict):
+        org_id = org_id or nested_org.get("id")
+        org_role = org_role or nested_org.get("rol")
+    return org_id, normalize_org_role(org_role)
+
+
+def normalize_org_role(role: str | None) -> str | None:
+    if role in {"admin", "org:admin"}:
+        return "org:admin"
+    if role in {"member", "org:member"}:
+        return "org:member"
+    return role
+
+
 def extract_bearer(authorization: str | None) -> str:
     if not authorization:
         raise HTTPException(
@@ -79,8 +97,7 @@ async def require_auth(
             detail=str(error),
         ) from error
 
-    org_id = claims.get("org_id")
-    org_role = claims.get("org_role")
+    org_id, org_role = extract_org_context(claims)
     user_id = claims.get("sub")
     if not org_id:
         raise HTTPException(

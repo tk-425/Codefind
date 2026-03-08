@@ -1,8 +1,8 @@
 .page-grid {
   display: grid;
   gap: 1.5rem;
-  min-height: 100vh;
-  padding: 2rem;
+  min-height: calc(100vh - 120px);
+  padding: 0 2rem 2rem;
 }
 
 .hero-card,
@@ -26,6 +26,33 @@
 
 .lede {
   max-width: 38rem;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.error-text {
+  color: #a12a2a;
+  font-weight: 600;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(31, 111, 139, 0.12);
+  color: #1b4965;
+  font-weight: 600;
 }
 
 @media (min-width: 900px) {

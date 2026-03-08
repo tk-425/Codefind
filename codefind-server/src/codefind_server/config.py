@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from urllib.parse import urlparse
 from pathlib import Path
 
 
@@ -15,6 +16,7 @@ SERVER_ROOT = Path(__file__).resolve().parents[2]
 @dataclass(frozen=True)
 class Settings:
     environment: str
+    web_app_url: str
     vector_store: str
     qdrant_url: str
     ollama_url: str
@@ -48,6 +50,7 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             environment=os.getenv("ENVIRONMENT", "development"),
+            web_app_url=os.getenv("WEB_APP_URL", "http://localhost:5173"),
             vector_store=os.getenv("VECTOR_STORE", ""),
             qdrant_url=os.getenv("QDRANT_URL", ""),
             ollama_url=os.getenv("OLLAMA_URL", ""),
@@ -98,6 +101,7 @@ class Settings:
             raise SettingsError(
                 f"Unsupported VECTOR_STORE '{self.vector_store}'. Expected 'qdrant'."
             )
+        self._validate_web_app_url(self.web_app_url)
         if self.audit_log_file is not None:
             self._validate_audit_log_path(self.audit_log_file)
         if not 0.0 <= self.sentry_traces_sample_rate <= 1.0:
@@ -122,6 +126,12 @@ class Settings:
             raise SettingsError(
                 "AUDIT_LOG_PATH must live outside the repository working tree."
             )
+
+    @staticmethod
+    def _validate_web_app_url(value: str) -> None:
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise SettingsError("WEB_APP_URL must be a valid http(s) URL.")
 
 
 @lru_cache(maxsize=1)

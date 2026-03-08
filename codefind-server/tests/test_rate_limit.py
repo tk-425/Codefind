@@ -14,6 +14,7 @@ async def _identity_resolver(_request) -> RateLimitIdentity:
 def _settings() -> Settings:
     return Settings(
         environment="test",
+        web_app_url="http://localhost:5173",
         vector_store="qdrant",
         qdrant_url="http://localhost:6333",
         ollama_url="http://localhost:11434",

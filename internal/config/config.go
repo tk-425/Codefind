@@ -18,6 +18,7 @@ const (
 
 type Config struct {
 	ServerURL   string `json:"server_url,omitempty"`
+	WebAppURL   string `json:"web_app_url,omitempty"`
 	ActiveOrgID string `json:"active_org_id,omitempty"`
 	Editor      string `json:"editor,omitempty"`
 }
@@ -81,6 +82,7 @@ func Save(path string, cfg Config) error {
 func (c Config) Normalize() (Config, error) {
 	normalized := Config{
 		ServerURL:   strings.TrimSpace(c.ServerURL),
+		WebAppURL:   strings.TrimSpace(c.WebAppURL),
 		ActiveOrgID: strings.TrimSpace(c.ActiveOrgID),
 		Editor:      strings.TrimSpace(c.Editor),
 	}
@@ -91,6 +93,13 @@ func (c Config) Normalize() (Config, error) {
 			return Config{}, err
 		}
 		normalized.ServerURL = serverURL
+	}
+	if normalized.WebAppURL != "" {
+		webAppURL, err := pathutil.NormalizeServerURL(normalized.WebAppURL)
+		if err != nil {
+			return Config{}, err
+		}
+		normalized.WebAppURL = webAppURL
 	}
 
 	return normalized, nil
@@ -107,6 +116,11 @@ func (c Config) DisplayMap() map[string]string {
 		activeOrg = "<unset>"
 	}
 
+	webAppURL := c.WebAppURL
+	if webAppURL == "" {
+		webAppURL = "<unset>"
+	}
+
 	editor := c.Editor
 	if editor == "" {
 		editor = "<unset>"
@@ -116,5 +130,6 @@ func (c Config) DisplayMap() map[string]string {
 		"active_org_id": activeOrg,
 		"editor":        editor,
 		"server_url":    serverURL,
+		"web_app_url":   webAppURL,
 	}
 }

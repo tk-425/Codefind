@@ -7,6 +7,7 @@ from .config import get_settings
 from .logging import configure_logging
 from .middleware import request_context_middleware
 from .middleware.rate_limit import RateLimitMiddleware
+from .routes.auth import router as auth_router
 from .routes.health import router as health_router
 from .security import init_sentry, request_body_limit_middleware
 
@@ -31,5 +32,6 @@ def create_app() -> FastAPI:
     app.middleware("http")(request_context_middleware)
     app.middleware("http")(request_body_limit_middleware(settings.max_request_body_bytes))
     app.add_middleware(RateLimitMiddleware, settings=settings)
+    app.include_router(auth_router)
     app.include_router(health_router)
     return app

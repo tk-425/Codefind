@@ -12,6 +12,7 @@ def test_emit_audit_event_writes_redacted_jsonl(tmp_path: Path):
     audit_path = tmp_path / "audit" / "events.jsonl"
     settings = Settings(
         environment="test",
+        web_app_url="http://localhost:5173",
         vector_store="qdrant",
         qdrant_url="http://localhost:6333",
         ollama_url="http://localhost:11434",

@@ -34,6 +34,7 @@ def test_settings_reject_audit_log_path_inside_repo(tmp_path: Path):
     audit_path = REPO_ROOT / "audit.jsonl"
     settings = Settings(
         environment="test",
+        web_app_url="http://localhost:5173",
         vector_store="qdrant",
         qdrant_url="http://localhost:6333",
         ollama_url="http://localhost:11434",
@@ -51,6 +52,7 @@ def test_settings_reject_audit_log_path_inside_repo(tmp_path: Path):
 def test_settings_reject_non_positive_limits():
     settings = Settings(
         environment="test",
+        web_app_url="http://localhost:5173",
         vector_store="qdrant",
         qdrant_url="http://localhost:6333",
         ollama_url="http://localhost:11434",
@@ -62,4 +64,21 @@ def test_settings_reject_non_positive_limits():
     )
 
     with pytest.raises(SettingsError, match="positive integer"):
+        settings.validate_required()
+
+
+def test_settings_reject_invalid_web_app_url():
+    settings = Settings(
+        environment="test",
+        web_app_url="localhost:5173",
+        vector_store="qdrant",
+        qdrant_url="http://localhost:6333",
+        ollama_url="http://localhost:11434",
+        clerk_iss="https://clerk.example.com",
+        clerk_azp="http://localhost:3000",
+        clerk_jwks_url="https://clerk.example.com/jwks",
+        clerk_secret_key="secret",
+    )
+
+    with pytest.raises(SettingsError, match="WEB_APP_URL"):
         settings.validate_required()

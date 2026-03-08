@@ -1,3 +1,44 @@
 .app-shell {
   min-height: 100vh;
 }
+
+.loading-shell {
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
+.shell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.5rem 2rem 0.5rem;
+}
+
+.shell-kicker {
+  margin: 0;
+  color: #2b5d6e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.shell-title {
+  margin: 0.2rem 0 0;
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+}
+
+.shell-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+@media (max-width: 760px) {
+  .shell-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
