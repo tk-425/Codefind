@@ -193,6 +193,7 @@ func newAdminCommand(configPath *string) *cobra.Command {
 	}
 	adminCmd.AddCommand(newAdminListCommand(configPath))
 	adminCmd.AddCommand(newAdminInviteCommand(configPath))
+	adminCmd.AddCommand(newAdminRevokeInviteCommand(configPath))
 	adminCmd.AddCommand(newAdminRemoveCommand(configPath))
 	return adminCmd
 }
@@ -259,6 +260,26 @@ func newAdminInviteCommand(configPath *string) *cobra.Command {
 	command.Flags().StringVar(&email, "email", "", "email address to invite")
 	command.Flags().StringVar(&role, "role", "org:member", "organization role for the invitee")
 	return command
+}
+
+func newAdminRevokeInviteCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "revoke-invite <invitation-id>",
+		Short: "Revoke a pending invitation in the current token organization",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			if err != nil {
+				return err
+			}
+
+			response, err := apiClient.RevokeAdminInvitation(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
 }
 
 func newAdminRemoveCommand(configPath *string) *cobra.Command {

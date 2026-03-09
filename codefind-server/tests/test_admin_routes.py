@@ -38,6 +38,22 @@ class DummyClerkAdminService:
             "inviter_user_id": inviter_user_id,
         }
 
+    async def revoke_org_invitation(self, *, organization_id: str, invitation_id: str, requesting_user_id: str):
+        assert organization_id == "org_123"
+        assert invitation_id == "orginv_1"
+        assert requesting_user_id == "user_admin"
+        return {
+            "id": invitation_id,
+            "email_address": "new@example.com",
+            "role": "org:member",
+            "status": "revoked",
+            "organization_id": organization_id,
+            "created_at": 1,
+            "updated_at": 2,
+            "expires_at": 3,
+            "inviter_user_id": requesting_user_id,
+        }
+
     async def remove_org_member(self, *, organization_id: str, user_id: str):
         assert organization_id == "org_123"
         return {
@@ -125,6 +141,16 @@ def test_invite_member_returns_created_invitation():
 
     assert response.status_code == 201
     assert response.json()["email_address"] == "new@example.com"
+
+
+def test_revoke_invitation_returns_revoked_invitation():
+    app = _make_app()
+    app.dependency_overrides[require_admin] = _require_admin
+    with TestClient(app) as client:
+        response = client.post("/admin/invitations/orginv_1/revoke")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "revoked"
 
 
 def test_remove_member_rejects_self_removal():

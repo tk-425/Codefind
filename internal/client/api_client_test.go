@@ -137,6 +137,37 @@ func TestClientCreateAdminInvitationSendsJSONBody(t *testing.T) {
 	}
 }
 
+func TestClientRevokeAdminInvitationPostsToRevokeEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var method string
+	var path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"revoked","organization_id":"org_123"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, fakeTokenLoader{token: "token-123"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	response, err := client.RevokeAdminInvitation(context.Background(), "orginv_1")
+	if err != nil {
+		t.Fatalf("RevokeAdminInvitation() error = %v", err)
+	}
+
+	if method != http.MethodPost || path != "/admin/invitations/orginv_1/revoke" {
+		t.Fatalf("saw %s %s", method, path)
+	}
+	if response.Status != "revoked" {
+		t.Fatalf("response = %#v, want revoked invitation", response)
+	}
+}
+
 func TestClientGetCollectionsDecodesResponse(t *testing.T) {
 	t.Parallel()
 

@@ -80,6 +80,20 @@ class ClerkAdminService:
         )
         return self._normalize_invitation(payload)
 
+    async def revoke_org_invitation(
+        self,
+        *,
+        organization_id: str,
+        invitation_id: str,
+        requesting_user_id: str,
+    ) -> dict[str, Any]:
+        payload = await self._request(
+            "POST",
+            f"/organizations/{organization_id}/invitations/{invitation_id}/revoke",
+            json={"requesting_user_id": requesting_user_id},
+        )
+        return self._normalize_invitation(payload)
+
     async def remove_org_member(
         self,
         *,
