@@ -105,7 +105,7 @@ export function SignInPage() {
           <CardDescription>
             {cliStatus === 'done'
               ? 'You can return to the terminal. The token handoff succeeded.'
-              : 'Use the Clerk sign-in flow tied to your approved invitation or existing account.'}
+              : 'Use your existing Code-Find account to sign in. If this is your first invitation, check your email and complete account setup from the invite link before returning here.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -118,7 +118,13 @@ export function SignInPage() {
         ) : isSignedIn ? (
           <p className="text-sm text-slate-600">Finishing CLI sign-in and returning your token…</p>
         ) : (
-          <SignIn signUpUrl="/no-access" />
+          <>
+            <p className="text-sm text-slate-600">
+              First time here? Check your email and finish account setup from the invitation link
+              before signing in with Code-Find.
+            </p>
+            <SignIn signUpUrl="/no-access" />
+          </>
         )}
         {cliStatus === 'posting' ? <p>Posting your token back to the CLI callback...</p> : null}
         {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
