@@ -79,6 +79,36 @@ async def invite_member(
     return OrganizationInvitationResponse.model_validate(created)
 
 
+@router.post("/invitations/{invitation_id}/revoke", response_model=OrganizationInvitationResponse)
+async def revoke_invitation(
+    invitation_id: str,
+    context: OrgContext = Depends(require_admin),
+    service: ClerkAdminService = Depends(get_clerk_admin_service),
+) -> OrganizationInvitationResponse:
+    try:
+        revoked = await service.revoke_org_invitation(
+            organization_id=context.org_id,
+            invitation_id=invitation_id,
+            requesting_user_id=context.user_id,
+        )
+    except ClerkAdminError as error:
+        emit_audit_event(
+            event_type="admin.revoke_invite",
+            result="failure",
+            target=invitation_id,
+            metadata={"reason": str(error)},
+        )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error)) from error
+
+    emit_audit_event(
+        event_type="admin.revoke_invite",
+        result="success",
+        target=revoked.get("email_address") or invitation_id,
+        metadata={"invitation_id": invitation_id},
+    )
+    return OrganizationInvitationResponse.model_validate(revoked)
+
+
 @router.delete("/members/{user_id}", response_model=OrganizationMemberResponse)
 async def remove_member(
     user_id: str,

@@ -183,6 +183,33 @@ func TestAdminInviteCommandPostsJSON(t *testing.T) {
 	}
 }
 
+func TestAdminRevokeInviteCommandPostsToRevokeEndpoint(t *testing.T) {
+	var method string
+	var path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"revoked","organization_id":"org_123"}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "admin", "revoke-invite", "orginv_1")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if method != http.MethodPost || path != "/admin/invitations/orginv_1/revoke" {
+		t.Fatalf("saw %s %s", method, path)
+	}
+	if !strings.Contains(output, `"status": "revoked"`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
 func TestAdminRemoveCommandCallsDelete(t *testing.T) {
 	var method string
 	var path string

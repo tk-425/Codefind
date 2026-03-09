@@ -127,6 +127,14 @@ func (c *Client) CreateAdminInvitation(
 	return payload, nil
 }
 
+func (c *Client) RevokeAdminInvitation(ctx context.Context, invitationID string) (api.OrganizationInvitation, error) {
+	var payload api.OrganizationInvitation
+	if err := c.doJSON(ctx, http.MethodPost, "/admin/invitations/"+invitationID+"/revoke", nil, http.StatusOK, &payload); err != nil {
+		return api.OrganizationInvitation{}, err
+	}
+	return payload, nil
+}
+
 func (c *Client) RemoveAdminMember(ctx context.Context, userID string) (api.OrganizationMember, error) {
 	var payload api.OrganizationMember
 	if err := c.doJSON(ctx, http.MethodDelete, "/admin/members/"+userID, nil, http.StatusOK, &payload); err != nil {
