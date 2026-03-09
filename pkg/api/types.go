@@ -36,6 +36,7 @@ type OrganizationMemberListResponse struct {
 
 type OrganizationInvitation struct {
 	ID             string `json:"id"`
+	InvitationID   string `json:"invitation_id"`
 	EmailAddress   string `json:"email_address"`
 	Role           string `json:"role"`
 	Status         string `json:"status"`

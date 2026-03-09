@@ -132,7 +132,7 @@ func TestAdminListCommandCallsMemberAndInvitationEndpoints(t *testing.T) {
 		case "/admin/members":
 			_, _ = w.Write([]byte(`{"data":[{"user_id":"user_member","role":"org:member"}],"total_count":1}`))
 		case "/admin/invitations":
-			_, _ = w.Write([]byte(`{"data":[{"id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"pending","organization_id":"org_123"}],"total_count":1}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"orginv_1","invitation_id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"pending","organization_id":"org_123"}],"total_count":1}`))
 		default:
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
@@ -163,7 +163,7 @@ func TestAdminInviteCommandPostsJSON(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"pending","organization_id":"org_123"}`))
+		_, _ = w.Write([]byte(`{"id":"orginv_1","invitation_id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"pending","organization_id":"org_123"}`))
 	}))
 	defer server.Close()
 
@@ -181,6 +181,9 @@ func TestAdminInviteCommandPostsJSON(t *testing.T) {
 	if !strings.Contains(output, `"id": "orginv_1"`) {
 		t.Fatalf("output = %q", output)
 	}
+	if !strings.Contains(output, `"invitation_id": "orginv_1"`) {
+		t.Fatalf("output = %q", output)
+	}
 }
 
 func TestAdminRevokeInviteCommandPostsToRevokeEndpoint(t *testing.T) {
@@ -190,7 +193,7 @@ func TestAdminRevokeInviteCommandPostsToRevokeEndpoint(t *testing.T) {
 		method = r.Method
 		path = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"revoked","organization_id":"org_123"}`))
+		_, _ = w.Write([]byte(`{"id":"orginv_1","invitation_id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"revoked","organization_id":"org_123"}`))
 	}))
 	defer server.Close()
 
@@ -206,6 +209,9 @@ func TestAdminRevokeInviteCommandPostsToRevokeEndpoint(t *testing.T) {
 		t.Fatalf("saw %s %s", method, path)
 	}
 	if !strings.Contains(output, `"status": "revoked"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"invitation_id": "orginv_1"`) {
 		t.Fatalf("output = %q", output)
 	}
 }

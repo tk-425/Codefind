@@ -21,13 +21,14 @@ class DummyClerkAdminService:
 
     async def list_org_invitations(self, *, organization_id: str):
         assert organization_id == "org_123"
-        return type("Payload", (), {"data": [{"id": "orginv_1", "email_address": "new@example.com", "role": "org:member", "status": "pending", "organization_id": "org_123", "created_at": 1, "updated_at": 1, "expires_at": 2, "inviter_user_id": "user_admin"}], "total_count": 1})()
+        return type("Payload", (), {"data": [{"id": "orginv_1", "invitation_id": "orginv_1", "email_address": "new@example.com", "role": "org:member", "status": "pending", "organization_id": "org_123", "created_at": 1, "updated_at": 1, "expires_at": 2, "inviter_user_id": "user_admin"}], "total_count": 1})()
 
     async def create_org_invitation(self, *, organization_id: str, inviter_user_id: str, email_address: str, role: str):
         assert organization_id == "org_123"
         assert inviter_user_id == "user_admin"
         return {
             "id": "orginv_2",
+            "invitation_id": "orginv_2",
             "email_address": email_address,
             "role": role,
             "status": "pending",
@@ -44,6 +45,7 @@ class DummyClerkAdminService:
         assert requesting_user_id == "user_admin"
         return {
             "id": invitation_id,
+            "invitation_id": invitation_id,
             "email_address": "new@example.com",
             "role": "org:member",
             "status": "revoked",
@@ -128,6 +130,7 @@ def test_list_invitations_returns_pending_invitations():
 
     assert response.status_code == 200
     assert response.json()["data"][0]["id"] == "orginv_1"
+    assert response.json()["data"][0]["invitation_id"] == "orginv_1"
 
 
 def test_invite_member_returns_created_invitation():
@@ -141,6 +144,7 @@ def test_invite_member_returns_created_invitation():
 
     assert response.status_code == 201
     assert response.json()["email_address"] == "new@example.com"
+    assert response.json()["invitation_id"] == "orginv_2"
 
 
 def test_revoke_invitation_returns_revoked_invitation():
@@ -151,6 +155,7 @@ def test_revoke_invitation_returns_revoked_invitation():
 
     assert response.status_code == 200
     assert response.json()["status"] == "revoked"
+    assert response.json()["invitation_id"] == "orginv_1"
 
 
 def test_remove_member_rejects_self_removal():

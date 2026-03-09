@@ -208,8 +208,10 @@ class ClerkAdminService:
 
     @staticmethod
     def _normalize_invitation(item: dict[str, Any]) -> dict[str, Any]:
+        invitation_id = item.get("id")
         return {
-            "id": item.get("id"),
+            "id": invitation_id,
+            "invitation_id": invitation_id,
             "email_address": item.get("email_address"),
             "role": normalize_org_role(item.get("role")) or item.get("role"),
             "status": item.get("status"),
