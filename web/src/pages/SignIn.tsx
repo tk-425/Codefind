@@ -118,7 +118,7 @@ export function SignInPage() {
         ) : isSignedIn ? (
           <p className="text-sm text-slate-600">Finishing CLI sign-in and returning your token…</p>
         ) : (
-          <SignIn />
+          <SignIn signUpUrl="/no-access" />
         )}
         {cliStatus === 'posting' ? <p>Posting your token back to the CLI callback...</p> : null}
         {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
