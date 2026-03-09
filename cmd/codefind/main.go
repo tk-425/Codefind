@@ -25,6 +25,11 @@ var (
 	newAPIClient        = client.New
 	defaultTokenManager = keychain.DefaultManager
 	defaultPathResolver = config.DefaultPath
+	browserLoginRunner  = runBrowserLogin
+	newCallbackListener = authflow.NewLocalCallbackListener
+	startCallbackServer = authflow.StartCallbackServer
+	buildSignInURL      = authflow.BuildSignInURL
+	openBrowser         = authflow.DefaultBrowserOpener
 )
 
 func main() {
@@ -167,7 +172,7 @@ func newOrgListCommand(configPath *string) *cobra.Command {
 		Use:   "list",
 		Short: "List organizations available to the authenticated user",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiClient, err := loadAuthenticatedClient(*configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -197,7 +202,7 @@ func newAdminListCommand(configPath *string) *cobra.Command {
 		Use:   "list",
 		Short: "List members and invitations for the active token organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiClient, err := loadAuthenticatedClient(*configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -236,7 +241,7 @@ func newAdminInviteCommand(configPath *string) *cobra.Command {
 				return errors.New("--role must be org:admin or org:member")
 			}
 
-			apiClient, err := loadAuthenticatedClient(*configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -262,7 +267,7 @@ func newAdminRemoveCommand(configPath *string) *cobra.Command {
 		Short: "Remove a member from the current token organization",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			apiClient, err := loadAuthenticatedClient(*configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -281,7 +286,7 @@ func newListCommand(configPath *string) *cobra.Command {
 		Use:   "list",
 		Short: "List indexed repos available to the current organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiClient, err := loadAuthenticatedClient(*configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -305,7 +310,7 @@ func newStatsCommand(configPath *string) *cobra.Command {
 				return errors.New("--all cannot be combined with --repo-id")
 			}
 
-			apiClient, err := loadAuthenticatedClient(*configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -339,7 +344,7 @@ func newQueryCommand(configPath *string) *cobra.Command {
 				return errors.New("--all cannot be combined with --repo-id")
 			}
 
-			apiClient, err := loadAuthenticatedClient(*configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -380,7 +385,7 @@ func newTokenizeCommand(configPath *string) *cobra.Command {
 		Short: "Tokenize text using the server tokenizer",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			apiClient, err := loadAuthenticatedClient(*configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -398,65 +403,7 @@ func newAuthLoginCommand(configPath *string) *cobra.Command {
 		Use:   "login",
 		Short: "Open the browser and authenticate with Clerk",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg, err := loadRequiredConfig(*configPath)
-			if err != nil {
-				return err
-			}
-			if cfg.ServerURL == "" {
-				return errors.New("server_url is not configured; run 'codefind config --server-url <url>'")
-			}
-			webAppURL := cfg.WebAppURL
-			if webAppURL == "" {
-				webAppURL = "http://localhost:5173"
-			}
-
-			listener, err := authflow.NewLocalCallbackListener()
-			if err != nil {
-				return err
-			}
-			defer listener.Close()
-
-			ctx, cancel := context.WithTimeout(cmd.Context(), authflow.LoginTimeout())
-			defer cancel()
-
-			redirectURI, waitForToken, err := authflow.StartCallbackServer(ctx, listener, webAppURL)
-			if err != nil {
-				return err
-			}
-
-			signInURL, err := authflow.BuildSignInURL(cfg.ServerURL, redirectURI)
-			if err != nil {
-				return err
-			}
-
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "opening browser: %s\n", signInURL); err != nil {
-				return err
-			}
-			if err := authflow.DefaultBrowserOpener(signInURL); err != nil {
-				return fmt.Errorf("open browser manually with %s: %w", signInURL, err)
-			}
-
-			token, err := waitForToken()
-			if err != nil {
-				return err
-			}
-
-			manager := defaultTokenManager()
-			if err := manager.SaveToken(token); err != nil {
-				return err
-			}
-
-			if claims, err := authflow.DecodeTokenClaims(token); err == nil {
-				cfg.ActiveOrgID = claims.OrgID
-			} else {
-				cfg.ActiveOrgID = ""
-			}
-			if err := config.Save(*configPath, cfg); err != nil {
-				return err
-			}
-
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "authentication stored in keychain")
-			return err
+			return browserLoginRunner(cmd.Context(), cmd.OutOrStdout(), *configPath)
 		},
 	}
 }
@@ -580,7 +527,7 @@ func loadRequiredConfig(path string) (config.Config, error) {
 	return config.Config{}, err
 }
 
-func loadAuthenticatedClient(path string) (*client.Client, error) {
+func loadAuthenticatedClient(ctx context.Context, stdout io.Writer, path string) (*client.Client, error) {
 	cfg, err := loadRequiredConfig(path)
 	if err != nil {
 		return nil, err
@@ -599,8 +546,78 @@ func loadAuthenticatedClient(path string) (*client.Client, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, errors.New("stored token is empty; run 'codefind auth login'")
 	}
+	if expiry, err := authflow.TokenExpiryTime(token); err == nil && time.Now().UTC().After(expiry) {
+		if _, writeErr := fmt.Fprintln(stdout, "stored token expired; renewing via browser session..."); writeErr != nil {
+			return nil, writeErr
+		}
+		if err := browserLoginRunner(ctx, stdout, path); err != nil {
+			return nil, err
+		}
+	}
 
 	return newAPIClient(cfg.ServerURL, defaultTokenManager())
+}
+
+func runBrowserLogin(ctx context.Context, stdout io.Writer, configPath string) error {
+	cfg, err := loadRequiredConfig(configPath)
+	if err != nil {
+		return err
+	}
+	if cfg.ServerURL == "" {
+		return errors.New("server_url is not configured; run 'codefind config --server-url <url>'")
+	}
+	webAppURL := cfg.WebAppURL
+	if webAppURL == "" {
+		webAppURL = "http://localhost:5173"
+	}
+
+	listener, err := newCallbackListener()
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, authflow.LoginTimeout())
+	defer cancel()
+
+	redirectURI, waitForToken, err := startCallbackServer(timeoutCtx, listener, webAppURL)
+	if err != nil {
+		return err
+	}
+
+	signInURL, err := buildSignInURL(cfg.ServerURL, redirectURI)
+	if err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprintf(stdout, "opening browser: %s\n", signInURL); err != nil {
+		return err
+	}
+	if err := openBrowser(signInURL); err != nil {
+		return fmt.Errorf("open browser manually with %s: %w", signInURL, err)
+	}
+
+	token, err := waitForToken()
+	if err != nil {
+		return err
+	}
+
+	manager := defaultTokenManager()
+	if err := manager.SaveToken(token); err != nil {
+		return err
+	}
+
+	if claims, err := authflow.DecodeTokenClaims(token); err == nil {
+		cfg.ActiveOrgID = claims.OrgID
+	} else {
+		cfg.ActiveOrgID = ""
+	}
+	if err := config.Save(configPath, cfg); err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintln(stdout, "authentication stored in keychain")
+	return err
 }
 
 func writeJSON(stdout io.Writer, value any) error {

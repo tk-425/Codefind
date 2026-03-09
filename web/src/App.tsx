@@ -1,5 +1,5 @@
-import { Show, SignInButton, UserButton, useAuth } from '@clerk/react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Show, UserButton, useAuth } from '@clerk/react'
+import { Link, Navigate, Route, Routes } from 'react-router-dom'
 import './App.css'
 import { Button } from '@/components/ui/button'
 import { SearchPage } from './pages/Search'
@@ -34,11 +34,9 @@ function ShellHeader() {
       </div>
       <div className="shell-actions">
         <Show when="signed-out">
-          <SignInButton>
-            <Button type="button" variant="outline">
-              Sign in
-            </Button>
-          </SignInButton>
+          <Button asChild type="button" variant="outline">
+            <Link to="/signin">Sign in</Link>
+          </Button>
         </Show>
         <Show when="signed-in">
           <UserButton />

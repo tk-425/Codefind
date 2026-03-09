@@ -3,14 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/tk-425/Codefind/internal/authflow"
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/keychain"
 )
@@ -20,30 +25,58 @@ type fakeKeychainProvider struct {
 	err   error
 }
 
-func (f fakeKeychainProvider) Set(service, user, password string) error {
+func (f *fakeKeychainProvider) Set(service, user, password string) error {
 	f.token = password
 	return nil
 }
 
-func (f fakeKeychainProvider) Get(service, user string) (string, error) {
+func (f *fakeKeychainProvider) Get(service, user string) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}
 	return f.token, nil
 }
 
-func (f fakeKeychainProvider) Delete(service, user string) error {
+func (f *fakeKeychainProvider) Delete(service, user string) error {
 	return nil
 }
 
 func useFakeTokenManager(token string, err error) func() {
 	previous := defaultTokenManager
 	defaultTokenManager = func() *keychain.Manager {
-		return keychain.NewManager(fakeKeychainProvider{token: token, err: err})
+		return keychain.NewManager(&fakeKeychainProvider{token: token, err: err})
 	}
 	return func() {
 		defaultTokenManager = previous
 	}
+}
+
+func useMutableTokenManager(provider *fakeKeychainProvider) func() {
+	previous := defaultTokenManager
+	defaultTokenManager = func() *keychain.Manager {
+		return keychain.NewManager(provider)
+	}
+	return func() {
+		defaultTokenManager = previous
+	}
+}
+
+func useBrowserLoginRunner(
+	runner func(context.Context, io.Writer, string) error,
+) func() {
+	previous := browserLoginRunner
+	browserLoginRunner = runner
+	return func() {
+		browserLoginRunner = previous
+	}
+}
+
+func makeTestToken(expiry time.Time, orgID string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(
+		`{"org_id":"` + orgID + `","org_role":"org:admin","exp":` + fmt.Sprint(expiry.Unix()) + `}`,
+	))
+	return header + "." + payload + ".signature"
 }
 
 func writeTestConfig(t *testing.T, serverURL string) string {
@@ -290,7 +323,7 @@ func TestLoadAuthenticatedClientRequiresStoredToken(t *testing.T) {
 	defer restore()
 
 	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
-	_, err := loadAuthenticatedClient(configPath)
+	_, err := loadAuthenticatedClient(context.Background(), io.Discard, configPath)
 	if err == nil {
 		t.Fatal("loadAuthenticatedClient() error = nil, want auth guidance")
 	}
@@ -350,8 +383,61 @@ func TestFakeKeychainProviderCanReturnWrappedError(t *testing.T) {
 	defer restore()
 
 	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
-	_, err := loadAuthenticatedClient(configPath)
+	_, err := loadAuthenticatedClient(context.Background(), io.Discard, configPath)
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("error = %v, want wrapped provider error", err)
+	}
+}
+
+func TestListCommandRenewsExpiredTokenViaBrowserFlow(t *testing.T) {
+	initialToken := makeTestToken(time.Now().UTC().Add(-time.Minute), "org_old")
+	provider := &fakeKeychainProvider{
+		token: initialToken,
+	}
+	restoreTokenManager := useMutableTokenManager(provider)
+	defer restoreTokenManager()
+
+	restoreLogin := useBrowserLoginRunner(func(_ context.Context, stdout io.Writer, _ string) error {
+		if err := provider.Set("", "", makeTestToken(time.Now().UTC().Add(15*time.Minute), "org_123")); err != nil {
+			return err
+		}
+		_, err := io.WriteString(stdout, "authentication stored in keychain\n")
+		return err
+	})
+	defer restoreLogin()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/collections" {
+			t.Fatalf("path = %q, want /collections", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"repo_id":"repo-a"}],"total_count":1}`))
+	}))
+	defer server.Close()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "list")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, "stored token expired; renewing via browser session...") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+		t.Fatalf("output = %q", output)
+	}
+	token, err := provider.Get("", "")
+	if err != nil {
+		t.Fatalf("provider.Get() error = %v", err)
+	}
+	if token == initialToken {
+		t.Fatal("stored token was not replaced during renewal")
+	}
+	claims, err := authflow.DecodeTokenClaims(token)
+	if err != nil {
+		t.Fatalf("DecodeTokenClaims() error = %v", err)
+	}
+	if claims.OrgID != "org_123" || claims.OrgRole != "org:admin" {
+		t.Fatalf("claims = %+v, want renewed org claims", claims)
 	}
 }

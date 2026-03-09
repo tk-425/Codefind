@@ -1,4 +1,5 @@
-import { Show, SignInButton, UserButton, useAuth } from '@clerk/react'
+import { Show, UserButton, useAuth } from '@clerk/react'
+import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import './page.css'
@@ -15,8 +16,9 @@ export function NoAccessPage() {
             Your account is signed in, but no organization access is active.
           </CardTitle>
           <CardDescription className="lede text-base text-slate-600">
-          Code-Find is invite-only. Ask an administrator to send you an invitation, then return
-          using the invitation link.
+          Code-Find is invite-only. New accounts must come through an administrator-issued
+          invitation link. If you were not invited, you cannot create an organization or access
+          the product from this page.
           </CardDescription>
         </CardHeader>
       </Card>
@@ -34,11 +36,9 @@ export function NoAccessPage() {
         <CardContent>
         <div className="inline-actions">
           <Show when="signed-out">
-            <SignInButton>
-              <Button type="button">
-                Sign in
-              </Button>
-            </SignInButton>
+            <Button asChild type="button">
+              <Link to="/signin">Back to sign in</Link>
+            </Button>
           </Show>
           <Show when="signed-in">
             <UserButton />
