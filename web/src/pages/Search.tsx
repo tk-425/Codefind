@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import './page.css'
 
 export function SearchPage() {
-  const { orgId, userId } = useAuth()
+  const { isLoaded } = useAuth()
 
   return (
     <section className="page-grid">
@@ -20,12 +20,18 @@ export function SearchPage() {
       </Card>
       <Card className="panel-card auth-panel border-white/70 bg-white/88 shadow-2xl shadow-sky-950/8 backdrop-blur">
         <CardHeader>
-          <CardTitle>Session context</CardTitle>
-          <CardDescription>Authenticated Clerk context is available for later API calls.</CardDescription>
+          <CardTitle>Signed in successfully</CardTitle>
+          <CardDescription>
+            Your approved account is active and ready for the search experience once that phase is
+            enabled.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-slate-700">
-          <p>Org: {orgId ?? 'missing'}</p>
-          <p>User: {userId ?? 'missing'}</p>
+          <p>
+            {isLoaded
+              ? 'Authentication is in place. Search and indexing features will be added in later phases.'
+              : 'Loading your authenticated workspace...'}
+          </p>
         </CardContent>
       </Card>
     </section>
