@@ -39,6 +39,7 @@ class OrganizationMemberListResponse(BaseModel):
 
 class OrganizationInvitationResponse(BaseModel):
     id: str
+    invitation_id: str
     email_address: str
     role: str
     status: str

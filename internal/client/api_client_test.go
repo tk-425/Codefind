@@ -135,6 +135,9 @@ func TestClientCreateAdminInvitationSendsJSONBody(t *testing.T) {
 	if response.ID != "orginv_1" {
 		t.Fatalf("response = %#v, want decoded invitation", response)
 	}
+	if response.InvitationID != "orginv_1" {
+		t.Fatalf("response = %#v, want invitation_id alias", response)
+	}
 }
 
 func TestClientRevokeAdminInvitationPostsToRevokeEndpoint(t *testing.T) {
@@ -165,6 +168,9 @@ func TestClientRevokeAdminInvitationPostsToRevokeEndpoint(t *testing.T) {
 	}
 	if response.Status != "revoked" {
 		t.Fatalf("response = %#v, want revoked invitation", response)
+	}
+	if response.InvitationID != "orginv_1" {
+		t.Fatalf("response = %#v, want invitation_id alias", response)
 	}
 }
 
