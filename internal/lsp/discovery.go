@@ -1,11 +1,23 @@
 package lsp
 
-import "slices"
+import (
+	"os/exec"
+	"slices"
+	"sort"
+)
 
 type ServerInfo struct {
 	Name       string
 	Executable string
 	Args       []string
+}
+
+type Availability struct {
+	Language   string
+	Name       string
+	Executable string
+	Path       string
+	Available  bool
 }
 
 var KnownLSPs = map[string]ServerInfo{
@@ -37,4 +49,30 @@ func UniqueLSPKeys(languages []string) []string {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func SupportedLSPKeys() []string {
+	keys := make([]string, 0, len(KnownLSPs))
+	for key := range KnownLSPs {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func DiscoverAvailability() []Availability {
+	keys := SupportedLSPKeys()
+	results := make([]Availability, 0, len(keys))
+	for _, language := range keys {
+		server := KnownLSPs[language]
+		path, err := exec.LookPath(server.Executable)
+		results = append(results, Availability{
+			Language:   language,
+			Name:       server.Name,
+			Executable: server.Executable,
+			Path:       path,
+			Available:  err == nil,
+		})
+	}
+	return results
 }
