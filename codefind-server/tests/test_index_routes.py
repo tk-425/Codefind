@@ -186,6 +186,87 @@ def test_index_route_returns_conflict_when_repo_lock_is_active():
     assert response.json()["detail"] == "An indexing job is already active for this repository."
 
 
+def test_index_route_releases_repo_lock_after_success():
+    service = DummyIndexingService()
+    lock_manager = IndexJobLockManager()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+    app.dependency_overrides[get_index_lock_manager] = lambda: lock_manager
+
+    payload = {
+        "repo_id": "repo-a",
+        "chunks": [
+            {
+                "id": "chunk-1",
+                "content": "func main() {}",
+                "metadata": {
+                    "repo_id": "repo-a",
+                    "path": "main.go",
+                    "language": "go",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content_hash": "hash-1",
+                    "status": "active",
+                    "chunking_method": "window",
+                },
+            }
+        ],
+    }
+
+    with TestClient(app) as client:
+        first = client.post("/index", json=payload)
+        second = client.post("/index", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+
+
+def test_index_route_releases_repo_lock_after_failure():
+    class FailingIndexingService(DummyIndexingService):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = 0
+
+        async def index_chunks(self, *, org_id: str, request):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            return await super().index_chunks(org_id=org_id, request=request)
+
+    service = FailingIndexingService()
+    lock_manager = IndexJobLockManager()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+    app.dependency_overrides[get_index_lock_manager] = lambda: lock_manager
+
+    payload = {
+        "repo_id": "repo-a",
+        "chunks": [
+            {
+                "id": "chunk-1",
+                "content": "func main() {}",
+                "metadata": {
+                    "repo_id": "repo-a",
+                    "path": "main.go",
+                    "language": "go",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content_hash": "hash-1",
+                    "status": "active",
+                    "chunking_method": "window",
+                },
+            }
+        ],
+    }
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        first = client.post("/index", json=payload)
+        second = client.post("/index", json=payload)
+
+    assert first.status_code == 500
+    assert second.status_code == 200
+
+
 def test_chunk_status_route_updates_tombstones():
     service = DummyIndexingService()
     app = _make_app(service)
@@ -206,6 +287,31 @@ def test_chunk_status_route_updates_tombstones():
     assert len(service.status_calls) == 1
     assert service.status_calls[0]["org_id"] == "org_123"
     assert service.status_calls[0]["request"].chunk_ids == ["chunk-1", "chunk-2"]
+
+
+def test_chunk_status_route_emits_audit_event(monkeypatch):
+    service = DummyIndexingService()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+    events = []
+    monkeypatch.setattr(index_routes, "emit_audit_event", lambda **kwargs: events.append(kwargs))
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/chunks/status",
+            json={
+                "repo_id": "repo-a",
+                "chunk_ids": ["chunk-1", "chunk-2"],
+                "status": "tombstoned",
+            },
+        )
+
+    assert response.status_code == 200
+    assert len(events) == 1
+    assert events[0]["event_type"] == "chunks.status"
+    assert events[0]["result"] == "success"
+    assert events[0]["metadata"]["status"] == "tombstoned"
+    assert events[0]["metadata"]["chunk_count"] == 2
 
 
 def test_tombstoned_chunk_list_route_is_admin_only():

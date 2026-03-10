@@ -94,7 +94,10 @@ class IndexingService:
                 found_count=0,
                 files=[],
             )
-        points = await self._vector_store.scroll(collection, {"status": "tombstoned"})
+        points = await self._vector_store.scroll(
+            collection,
+            {"status": "tombstoned", "repo_id": repo_id},
+        )
         files = self._summarize_tombstoned_points(points)
         return TombstonedChunkListResponse(
             status="ok",
@@ -118,7 +121,10 @@ class IndexingService:
                 purged_count=0,
                 files=[],
             )
-        points = await self._vector_store.scroll(collection, {"status": "tombstoned"})
+        points = await self._vector_store.scroll(
+            collection,
+            {"status": "tombstoned", "repo_id": request.repo_id},
+        )
 
         cutoff = datetime.now(UTC).timestamp() - (request.older_than_days * 86400)
         matching_points = []
