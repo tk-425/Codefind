@@ -389,6 +389,22 @@ func TestCleanupPurgeCommandCallsDeleteEndpoint(t *testing.T) {
 	}
 }
 
+func TestLSPStatusCommandPrintsSupportedLanguages(t *testing.T) {
+	output, err := executeCommand(t, "lsp", "status")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"supported_count": 7`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"language": "go"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"language": "typescript/javascript"`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
 func TestListCommandCallsCollectionsEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/collections" {

@@ -3,8 +3,24 @@ package lsp
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 )
+
+func TestSupportedLSPKeysAreStableAndSorted(t *testing.T) {
+	t.Parallel()
+
+	keys := SupportedLSPKeys()
+	if len(keys) != len(KnownLSPs) {
+		t.Fatalf("len(keys) = %d, want %d", len(keys), len(KnownLSPs))
+	}
+	if !slices.IsSorted(keys) {
+		t.Fatalf("keys should be sorted: %#v", keys)
+	}
+	if !slices.Contains(keys, "go") || !slices.Contains(keys, "typescript/javascript") {
+		t.Fatalf("expected known keys in %#v", keys)
+	}
+}
 
 func TestWarmLanguagesOnlyUsesUniqueLSPKeys(t *testing.T) {
 	originalInitializeClient := initializeClient
