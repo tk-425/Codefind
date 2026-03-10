@@ -15,6 +15,7 @@ import (
 	"github.com/tk-425/Codefind/internal/authflow"
 	"github.com/tk-425/Codefind/internal/client"
 	"github.com/tk-425/Codefind/internal/config"
+	"github.com/tk-425/Codefind/internal/indexer"
 	"github.com/tk-425/Codefind/internal/keychain"
 	"github.com/tk-425/Codefind/internal/query"
 	"github.com/tk-425/Codefind/internal/stats"
@@ -423,22 +424,29 @@ func newTokenizeCommand(configPath *string) *cobra.Command {
 }
 
 func newIndexCommand(configPath *string) *cobra.Command {
-	var request api.IndexRequest
+	var (
+		repoID      string
+		repoPath    string
+		force       bool
+		window      bool
+		retryLSP    bool
+		concurrency int
+	)
 
 	command := &cobra.Command{
 		Use:   "index",
 		Short: "Index a repo for the current organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(request.RepoID) == "" {
+			if strings.TrimSpace(repoID) == "" {
 				return errors.New("--repo-id is required")
 			}
-			if strings.TrimSpace(request.RepoPath) == "" {
+			if strings.TrimSpace(repoPath) == "" {
 				return errors.New("--repo-path is required")
 			}
-			if request.Concurrency < 1 {
+			if concurrency < 1 {
 				return errors.New("--concurrency must be >= 1")
 			}
-			if request.Window && request.RetryLSP {
+			if window && retryLSP {
 				return errors.New("--window cannot be combined with --retry-lsp")
 			}
 
@@ -446,7 +454,31 @@ func newIndexCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			response, err := apiClient.Index(cmd.Context(), request)
+			cfg, err := loadRequiredConfig(*configPath)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(cfg.ActiveOrgID) == "" {
+				return errors.New("active_org_id is not configured; run 'codefind auth login'")
+			}
+
+			manifest, err := indexer.LoadManifest(cfg.ActiveOrgID, repoID)
+			if err != nil {
+				return err
+			}
+			idx, err := indexer.New(repoPath, manifest)
+			if err != nil {
+				return err
+			}
+
+			response, err := idx.Index(cmd.Context(), indexer.RunOptions{
+				RepoID:      repoID,
+				OrgID:       cfg.ActiveOrgID,
+				Force:       force,
+				Window:      window,
+				RetryLSP:    retryLSP,
+				Concurrency: concurrency,
+			}, indexer.NewClientStore(apiClient))
 			if err != nil {
 				return err
 			}
@@ -454,12 +486,12 @@ func newIndexCommand(configPath *string) *cobra.Command {
 		},
 	}
 
-	command.Flags().StringVar(&request.RepoID, "repo-id", "", "repo identifier to index")
-	command.Flags().StringVar(&request.RepoPath, "repo-path", "", "local repo path to index")
-	command.Flags().BoolVar(&request.Force, "force", false, "reindex the full repo")
-	command.Flags().BoolVar(&request.Window, "window", false, "use window chunking only")
-	command.Flags().BoolVar(&request.RetryLSP, "retry-lsp", false, "retry LSP chunking for previously degraded unchanged files")
-	command.Flags().IntVar(&request.Concurrency, "concurrency", 1, "parallel file processing inside one indexing job")
+	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to index")
+	command.Flags().StringVar(&repoPath, "repo-path", "", "local repo path to index")
+	command.Flags().BoolVar(&force, "force", false, "reindex the full repo")
+	command.Flags().BoolVar(&window, "window", false, "use window chunking only")
+	command.Flags().BoolVar(&retryLSP, "retry-lsp", false, "retry LSP chunking for previously degraded unchanged files")
+	command.Flags().IntVar(&concurrency, "concurrency", 1, "parallel file processing inside one indexing job")
 	return command
 }
 

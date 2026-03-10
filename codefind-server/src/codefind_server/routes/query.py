@@ -13,7 +13,7 @@ from .collections import get_vector_store
 
 router = APIRouter(prefix="/query", tags=["query"])
 
-ALLOWED_FILTER_KEYS = {"project", "language"}
+ALLOWED_FILTER_KEYS = {"project", "language", "status"}
 MAX_TOP_K = 50
 
 
@@ -22,7 +22,7 @@ def get_ollama_service(request: Request) -> OllamaService:
 
 
 def _build_filters(payload: QueryRequest) -> dict[str, object]:
-    filters: dict[str, object] = {}
+    filters: dict[str, object] = {"status": "active"}
     if payload.project:
         filters["project"] = payload.project
     if payload.language:

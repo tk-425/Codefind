@@ -107,6 +107,7 @@ class TokenizeResponse(BaseModel):
 class IndexResponse(BaseModel):
     status: str
     repo_id: str
+    indexed_count: int = 0
     accepted: bool = False
     detail: str | None = None
 

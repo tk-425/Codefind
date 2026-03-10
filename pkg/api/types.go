@@ -120,20 +120,39 @@ type TokenizeResponse struct {
 	TokenCount int      `json:"token_count"`
 }
 
+type ChunkMetadata struct {
+	RepoID         string `json:"repo_id"`
+	Path           string `json:"path"`
+	Language       string `json:"language,omitempty"`
+	StartLine      int    `json:"start_line"`
+	EndLine        int    `json:"end_line"`
+	ContentHash    string `json:"content_hash"`
+	Status         string `json:"status"`
+	SymbolName     string `json:"symbol_name,omitempty"`
+	SymbolKind     string `json:"symbol_kind,omitempty"`
+	ParentName     string `json:"parent_name,omitempty"`
+	IndexedAt      string `json:"indexed_at,omitempty"`
+	ChunkingMethod string `json:"chunking_method,omitempty"`
+	FallbackReason string `json:"fallback_reason,omitempty"`
+}
+
+type IndexChunk struct {
+	ID       string        `json:"id"`
+	Content  string        `json:"content"`
+	Metadata ChunkMetadata `json:"metadata"`
+}
+
 type IndexRequest struct {
-	RepoID      string `json:"repo_id"`
-	RepoPath    string `json:"repo_path"`
-	Force       bool   `json:"force"`
-	Window      bool   `json:"window"`
-	RetryLSP    bool   `json:"retry_lsp"`
-	Concurrency int    `json:"concurrency"`
+	RepoID string       `json:"repo_id"`
+	Chunks []IndexChunk `json:"chunks"`
 }
 
 type IndexResponse struct {
-	Status   string `json:"status"`
-	RepoID   string `json:"repo_id"`
-	Accepted bool   `json:"accepted"`
-	Detail   string `json:"detail,omitempty"`
+	Status       string `json:"status"`
+	RepoID       string `json:"repo_id"`
+	IndexedCount int    `json:"indexed_count"`
+	Accepted     bool   `json:"accepted"`
+	Detail       string `json:"detail,omitempty"`
 }
 
 type ChunkStatusUpdateRequest struct {

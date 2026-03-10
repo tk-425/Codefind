@@ -33,6 +33,17 @@ class QdrantAdapter(VectorStore):
             ],
         )
 
+    async def ensure_collection(self, collection: str, vector_size: int) -> None:
+        if await self._client.collection_exists(collection):
+            return
+        await self._client.create_collection(
+            collection_name=collection,
+            vectors_config=models.VectorParams(
+                size=vector_size,
+                distance=models.Distance.COSINE,
+            ),
+        )
+
     async def query(
         self,
         collection: str,

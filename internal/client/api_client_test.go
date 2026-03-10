@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/tk-425/Codefind/pkg/api"
@@ -198,6 +199,65 @@ func TestClientGetCollectionsDecodesResponse(t *testing.T) {
 
 	if response.TotalCount != 1 || response.Data[0].RepoID != "repo-a" {
 		t.Fatalf("GetCollections() = %#v", response)
+	}
+}
+
+func TestClientIndexPostsChunksAndAcceptsOK(t *testing.T) {
+	t.Parallel()
+
+	var method string
+	var path string
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		decoded, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		body = string(decoded)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","repo_id":"repo-a","indexed_count":1,"accepted":true}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, fakeTokenLoader{token: "token-123"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	response, err := client.Index(context.Background(), api.IndexRequest{
+		RepoID: "repo-a",
+		Chunks: []api.IndexChunk{
+			{
+				ID:      "chunk-1",
+				Content: "func main() {}",
+				Metadata: api.ChunkMetadata{
+					RepoID:         "repo-a",
+					Path:           "main.go",
+					Language:       "go",
+					StartLine:      1,
+					EndLine:        1,
+					ContentHash:    "hash-1",
+					Status:         "active",
+					IndexedAt:      "2026-03-09T00:00:00Z",
+					ChunkingMethod: "window",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	if method != http.MethodPost || path != "/index" {
+		t.Fatalf("saw %s %s", method, path)
+	}
+	if !strings.Contains(body, `"repo_id":"repo-a"`) || !strings.Contains(body, `"chunking_method":"window"`) {
+		t.Fatalf("body = %q", body)
+	}
+	if response.IndexedCount != 1 || !response.Accepted {
+		t.Fatalf("Index() = %#v", response)
 	}
 }
 

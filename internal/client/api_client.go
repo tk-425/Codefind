@@ -94,7 +94,7 @@ func (c *Client) Tokenize(ctx context.Context, request api.TokenizeRequest) (api
 
 func (c *Client) Index(ctx context.Context, request api.IndexRequest) (api.IndexResponse, error) {
 	var payload api.IndexResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/index", request, http.StatusAccepted, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/index", request, http.StatusOK, &payload); err != nil {
 		return api.IndexResponse{}, err
 	}
 	return payload, nil

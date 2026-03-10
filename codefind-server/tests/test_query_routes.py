@@ -14,7 +14,7 @@ from codefind_server.routes.tokenize import router as tokenize_router
 class DummyVectorStore:
     def __init__(self) -> None:
         self.query_calls: list[dict[str, object]] = []
-        self.count_calls: list[str] = []
+        self.count_calls: list[dict[str, object]] = []
 
     async def list_collections(self) -> list[str]:
         return ["org_123_repo-a", "org_123_repo-b", "org_other_repo-z"]
@@ -44,8 +44,7 @@ class DummyVectorStore:
         ]
 
     async def count(self, collection: str, filters: dict[str, object]) -> int:
-        del filters
-        self.count_calls.append(collection)
+        self.count_calls.append({"collection": collection, "filters": filters})
         counts = {
             "org_123_repo-a": 12,
             "org_123_repo-b": 8,
@@ -97,12 +96,17 @@ def test_list_collections_only_returns_current_org_repos():
 
 def test_stats_are_org_scoped():
     app = _make_app()
+    vector_store: DummyVectorStore = app.state.vector_store
     with TestClient(app) as client:
         response = client.get("/stats")
 
     assert response.status_code == 200
     assert response.json()["repo_count"] == 2
     assert response.json()["chunk_count"] == 20
+    assert vector_store.count_calls == [
+        {"collection": "org_123_repo-a", "filters": {"status": "active"}},
+        {"collection": "org_123_repo-b", "filters": {"status": "active"}},
+    ]
 
 
 def test_query_searches_only_current_org_collections_and_clamps_top_k():
@@ -128,7 +132,10 @@ def test_query_searches_only_current_org_collections_and_clamps_top_k():
         "org_123_repo-b",
     }
     assert all(call["top_k"] == 50 for call in vector_store.query_calls)
-    assert all(call["filters"] == {"project": "codefind", "language": "go"} for call in vector_store.query_calls)
+    assert all(
+        call["filters"] == {"status": "active", "project": "codefind", "language": "go"}
+        for call in vector_store.query_calls
+    )
     assert response.json()["total_count"] == 2
 
 
