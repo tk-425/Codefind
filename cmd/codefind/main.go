@@ -77,6 +77,9 @@ globally with the documented /usr/local/bin flow.`),
 	rootCmd.AddCommand(newStatsCommand(&configPath))
 	rootCmd.AddCommand(newQueryCommand(&configPath))
 	rootCmd.AddCommand(newTokenizeCommand(&configPath))
+	rootCmd.AddCommand(newIndexCommand(&configPath))
+	rootCmd.AddCommand(newCleanupCommand(&configPath))
+	rootCmd.AddCommand(newLSPCommand(&configPath))
 
 	return rootCmd
 }
@@ -417,6 +420,117 @@ func newTokenizeCommand(configPath *string) *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), response)
 		},
 	}
+}
+
+func newIndexCommand(configPath *string) *cobra.Command {
+	var request api.IndexRequest
+
+	command := &cobra.Command{
+		Use:   "index",
+		Short: "Index a repo for the current organization",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(request.RepoID) == "" {
+				return errors.New("--repo-id is required")
+			}
+			if strings.TrimSpace(request.RepoPath) == "" {
+				return errors.New("--repo-path is required")
+			}
+			if request.Concurrency < 1 {
+				return errors.New("--concurrency must be >= 1")
+			}
+			if request.Window && request.RetryLSP {
+				return errors.New("--window cannot be combined with --retry-lsp")
+			}
+
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			if err != nil {
+				return err
+			}
+			response, err := apiClient.Index(cmd.Context(), request)
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+
+	command.Flags().StringVar(&request.RepoID, "repo-id", "", "repo identifier to index")
+	command.Flags().StringVar(&request.RepoPath, "repo-path", "", "local repo path to index")
+	command.Flags().BoolVar(&request.Force, "force", false, "reindex the full repo")
+	command.Flags().BoolVar(&request.Window, "window", false, "use window chunking only")
+	command.Flags().BoolVar(&request.RetryLSP, "retry-lsp", false, "retry LSP chunking for previously degraded unchanged files")
+	command.Flags().IntVar(&request.Concurrency, "concurrency", 1, "parallel file processing inside one indexing job")
+	return command
+}
+
+func newCleanupCommand(configPath *string) *cobra.Command {
+	var (
+		repoID        string
+		listMode      bool
+		olderThanDays int
+	)
+
+	command := &cobra.Command{
+		Use:   "cleanup",
+		Short: "Inspect or purge tombstoned chunks for a repo",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(repoID) == "" {
+				return errors.New("--repo-id is required")
+			}
+			if listMode && olderThanDays > 0 {
+				return errors.New("--list cannot be combined with --older-than")
+			}
+			if !listMode && olderThanDays == 0 {
+				return errors.New("either --list or --older-than must be provided")
+			}
+			if listMode {
+				return errors.New("cleanup listing is not implemented yet")
+			}
+
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			if err != nil {
+				return err
+			}
+			response, err := apiClient.PurgeChunks(cmd.Context(), api.ChunkPurgeRequest{
+				RepoID:        repoID,
+				OlderThanDays: olderThanDays,
+			})
+			if err != nil {
+				return err
+			}
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+
+	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to inspect or purge")
+	command.Flags().BoolVar(&listMode, "list", false, "list tombstoned chunks")
+	command.Flags().IntVar(&olderThanDays, "older-than", 0, "purge tombstoned chunks older than the given number of days")
+	return command
+}
+
+func newLSPCommand(_ *string) *cobra.Command {
+	lspCmd := &cobra.Command{
+		Use:   "lsp",
+		Short: "Inspect or test LSP availability for indexing",
+	}
+
+	lspCmd.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show the current LSP status for supported languages",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return errors.New("lsp status is not implemented yet")
+		},
+	})
+	lspCmd.AddCommand(&cobra.Command{
+		Use:   "test <language>",
+		Short: "Test LSP document-symbol extraction for one language",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return errors.New("lsp test is not implemented yet")
+		},
+	})
+
+	return lspCmd
 }
 
 func newAuthLoginCommand(configPath *string) *cobra.Command {

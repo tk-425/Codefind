@@ -92,6 +92,33 @@ func (c *Client) Tokenize(ctx context.Context, request api.TokenizeRequest) (api
 	return payload, nil
 }
 
+func (c *Client) Index(ctx context.Context, request api.IndexRequest) (api.IndexResponse, error) {
+	var payload api.IndexResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/index", request, http.StatusAccepted, &payload); err != nil {
+		return api.IndexResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) UpdateChunkStatus(
+	ctx context.Context,
+	request api.ChunkStatusUpdateRequest,
+) (api.ChunkStatusUpdateResponse, error) {
+	var payload api.ChunkStatusUpdateResponse
+	if err := c.doJSON(ctx, http.MethodPatch, "/chunks/status", request, http.StatusOK, &payload); err != nil {
+		return api.ChunkStatusUpdateResponse{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) PurgeChunks(ctx context.Context, request api.ChunkPurgeRequest) (api.ChunkPurgeResponse, error) {
+	var payload api.ChunkPurgeResponse
+	if err := c.doJSON(ctx, http.MethodDelete, "/chunks/purge", request, http.StatusOK, &payload); err != nil {
+		return api.ChunkPurgeResponse{}, err
+	}
+	return payload, nil
+}
+
 func (c *Client) GetOrganizations(ctx context.Context) (api.OrgListResponse, error) {
 	var payload api.OrgListResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/orgs", nil, http.StatusOK, &payload); err != nil {

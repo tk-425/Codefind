@@ -102,3 +102,24 @@ class TokenizeResponse(BaseModel):
     model: str
     tokens: list[str]
     token_count: int
+
+
+class IndexResponse(BaseModel):
+    status: str
+    repo_id: str
+    accepted: bool = False
+    detail: str | None = None
+
+
+class ChunkStatusUpdateResponse(BaseModel):
+    status: str
+    repo_id: str
+    updated_count: int
+    detail: str | None = None
+
+
+class ChunkPurgeResponse(BaseModel):
+    status: str
+    repo_id: str
+    purged_count: int
+    detail: str | None = None

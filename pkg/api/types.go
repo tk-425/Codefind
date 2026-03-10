@@ -119,3 +119,44 @@ type TokenizeResponse struct {
 	Tokens     []string `json:"tokens"`
 	TokenCount int      `json:"token_count"`
 }
+
+type IndexRequest struct {
+	RepoID      string `json:"repo_id"`
+	RepoPath    string `json:"repo_path"`
+	Force       bool   `json:"force"`
+	Window      bool   `json:"window"`
+	RetryLSP    bool   `json:"retry_lsp"`
+	Concurrency int    `json:"concurrency"`
+}
+
+type IndexResponse struct {
+	Status   string `json:"status"`
+	RepoID   string `json:"repo_id"`
+	Accepted bool   `json:"accepted"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+type ChunkStatusUpdateRequest struct {
+	RepoID   string   `json:"repo_id"`
+	ChunkIDs []string `json:"chunk_ids"`
+	Status   string   `json:"status"`
+}
+
+type ChunkStatusUpdateResponse struct {
+	Status       string `json:"status"`
+	RepoID       string `json:"repo_id"`
+	UpdatedCount int    `json:"updated_count"`
+	Detail       string `json:"detail,omitempty"`
+}
+
+type ChunkPurgeRequest struct {
+	RepoID        string `json:"repo_id"`
+	OlderThanDays int    `json:"older_than_days"`
+}
+
+type ChunkPurgeResponse struct {
+	Status      string `json:"status"`
+	RepoID      string `json:"repo_id"`
+	PurgedCount int    `json:"purged_count"`
+	Detail      string `json:"detail,omitempty"`
+}

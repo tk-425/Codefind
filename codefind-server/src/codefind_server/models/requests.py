@@ -24,3 +24,23 @@ class QueryRequest(BaseModel):
 
 class TokenizeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+
+
+class IndexRequest(BaseModel):
+    repo_id: str = Field(min_length=1, max_length=255)
+    repo_path: str = Field(min_length=1, max_length=4096)
+    force: bool = False
+    window: bool = False
+    retry_lsp: bool = False
+    concurrency: int = Field(default=1, ge=1, le=64)
+
+
+class ChunkStatusUpdateRequest(BaseModel):
+    repo_id: str = Field(min_length=1, max_length=255)
+    chunk_ids: list[str] = Field(min_length=1)
+    status: Literal["active", "tombstoned"]
+
+
+class ChunkPurgeRequest(BaseModel):
+    repo_id: str = Field(min_length=1, max_length=255)
+    older_than_days: int = Field(ge=1, le=3650)
