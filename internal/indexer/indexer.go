@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tk-425/Codefind/internal/chunker"
@@ -242,75 +244,152 @@ func shouldRetryLSP(file ManifestFile) bool {
 }
 
 func (i *Indexer) buildChunks(files []string, options RunOptions, currentCommit string) ([]api.IndexChunk, map[string]ManifestFile, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
-	hybrid := chunker.NewHybridChunker(chunker.DefaultConfig(), i.repoPath, options.Window)
+	if options.Concurrency <= 1 {
+		return i.buildChunksSerial(files, options, currentCommit)
+	}
+
+	type fileBuildResult struct {
+		path         string
+		chunks       []api.IndexChunk
+		manifestFile ManifestFile
+	}
+
+	results := make([]fileBuildResult, 0, len(files))
+	resultsCh := make(chan fileBuildResult, len(files))
+	errCh := make(chan error, len(files))
+	semaphore := make(chan struct{}, options.Concurrency)
+
+	var wg sync.WaitGroup
+	for _, relPath := range files {
+		relPath := relPath
+		wg.Go(func() {
+			select {
+			case semaphore <- struct{}{}:
+			case <-context.Background().Done():
+				return
+			}
+			defer func() { <-semaphore }()
+
+			fileChunks, manifestFile, err := i.buildChunkFile(relPath, options, currentCommit)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			resultsCh <- fileBuildResult{
+				path:         relPath,
+				chunks:       fileChunks,
+				manifestFile: manifestFile,
+			}
+		})
+	}
+
+	wg.Wait()
+	close(resultsCh)
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	for result := range resultsCh {
+		results = append(results, result)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].path < results[j].path
+	})
+
+	chunks := make([]api.IndexChunk, 0)
+	manifestFiles := make(map[string]ManifestFile, len(results))
+	for _, result := range results {
+		chunks = append(chunks, result.chunks...)
+		manifestFiles[result.path] = result.manifestFile
+	}
+
+	return chunks, manifestFiles, nil
+}
+
+func (i *Indexer) buildChunksSerial(files []string, options RunOptions, currentCommit string) ([]api.IndexChunk, map[string]ManifestFile, error) {
 	chunks := make([]api.IndexChunk, 0)
 	manifestFiles := make(map[string]ManifestFile, len(files))
 
 	for _, relPath := range files {
-		fullPath := filepath.Join(i.repoPath, relPath)
-		if !validatePathWithinRepo(i.repoPath, fullPath) {
-			return nil, nil, fmt.Errorf("file path outside repo root: %s", relPath)
-		}
-
-		contentBytes, err := os.ReadFile(fullPath)
+		fileChunks, manifestFile, err := i.buildChunkFile(relPath, options, currentCommit)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", relPath, err)
+			return nil, nil, err
 		}
-		content := string(contentBytes)
-		result, err := hybrid.ChunkFile(content, relPath)
-		if err != nil {
-			return nil, nil, fmt.Errorf("chunk %s: %w", relPath, err)
-		}
-
-		fileInfo, err := os.Stat(fullPath)
-		if err != nil {
-			return nil, nil, fmt.Errorf("stat %s: %w", relPath, err)
-		}
-
-		entry := ManifestFile{
-			Path:               relPath,
-			ContentHash:        chunker.GenerateContentHash(content),
-			Language:           result.Language,
-			SizeBytes:          fileInfo.Size(),
-			LineCount:          countLines(content),
-			LastIndexedCommit:  currentCommit,
-			LastModTime:        fileInfo.ModTime().UTC().Format(time.RFC3339),
-			LastChunkingMethod: result.Method,
-			FallbackReason:     result.FallbackReason,
-			ChunkingVersion:    "1",
-			LastIndexedAt:      now,
-			ChunkIDs:           make([]string, 0, len(result.Chunks)),
-		}
-
-		for _, symbolChunk := range result.Chunks {
-			chunkID := chunker.GenerateChunkID(options.RepoID, relPath, symbolChunk.StartLine, symbolChunk.EndLine, symbolChunk.Content)
-			entry.ChunkIDs = append(entry.ChunkIDs, chunkID)
-			chunks = append(chunks, api.IndexChunk{
-				ID:      chunkID,
-				Content: symbolChunk.Content,
-				Metadata: api.ChunkMetadata{
-					RepoID:         options.RepoID,
-					Path:           relPath,
-					Language:       result.Language,
-					StartLine:      symbolChunk.StartLine,
-					EndLine:        symbolChunk.EndLine,
-					ContentHash:    chunker.GenerateContentHash(symbolChunk.Content),
-					Status:         "active",
-					SymbolName:     symbolChunk.SymbolName,
-					SymbolKind:     symbolChunk.SymbolKind,
-					ParentName:     symbolChunk.ParentName,
-					IndexedAt:      now,
-					ChunkingMethod: result.Method,
-					FallbackReason: result.FallbackReason,
-				},
-			})
-		}
-
-		manifestFiles[relPath] = entry
+		chunks = append(chunks, fileChunks...)
+		manifestFiles[relPath] = manifestFile
 	}
 
 	return chunks, manifestFiles, nil
+}
+
+func (i *Indexer) buildChunkFile(relPath string, options RunOptions, currentCommit string) ([]api.IndexChunk, ManifestFile, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	hybrid := chunker.NewHybridChunker(chunker.DefaultConfig(), i.repoPath, options.Window)
+	fullPath := filepath.Join(i.repoPath, relPath)
+	if !validatePathWithinRepo(i.repoPath, fullPath) {
+		return nil, ManifestFile{}, fmt.Errorf("file path outside repo root: %s", relPath)
+	}
+
+	contentBytes, err := os.ReadFile(fullPath)
+	if err != nil {
+		return nil, ManifestFile{}, fmt.Errorf("read %s: %w", relPath, err)
+	}
+	content := string(contentBytes)
+	result, err := hybrid.ChunkFile(content, relPath)
+	if err != nil {
+		return nil, ManifestFile{}, fmt.Errorf("chunk %s: %w", relPath, err)
+	}
+
+	fileInfo, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, ManifestFile{}, fmt.Errorf("stat %s: %w", relPath, err)
+	}
+
+	entry := ManifestFile{
+		Path:               relPath,
+		ContentHash:        chunker.GenerateContentHash(content),
+		Language:           result.Language,
+		SizeBytes:          fileInfo.Size(),
+		LineCount:          countLines(content),
+		LastIndexedCommit:  currentCommit,
+		LastModTime:        fileInfo.ModTime().UTC().Format(time.RFC3339),
+		LastChunkingMethod: result.Method,
+		FallbackReason:     result.FallbackReason,
+		ChunkingVersion:    "1",
+		LastIndexedAt:      now,
+		ChunkIDs:           make([]string, 0, len(result.Chunks)),
+	}
+
+	chunks := make([]api.IndexChunk, 0, len(result.Chunks))
+	for _, symbolChunk := range result.Chunks {
+		chunkID := chunker.GenerateChunkID(options.RepoID, relPath, symbolChunk.StartLine, symbolChunk.EndLine, symbolChunk.Content)
+		entry.ChunkIDs = append(entry.ChunkIDs, chunkID)
+		chunks = append(chunks, api.IndexChunk{
+			ID:      chunkID,
+			Content: symbolChunk.Content,
+			Metadata: api.ChunkMetadata{
+				RepoID:         options.RepoID,
+				Path:           relPath,
+				Language:       result.Language,
+				StartLine:      symbolChunk.StartLine,
+				EndLine:        symbolChunk.EndLine,
+				ContentHash:    chunker.GenerateContentHash(symbolChunk.Content),
+				Status:         "active",
+				SymbolName:     symbolChunk.SymbolName,
+				SymbolKind:     symbolChunk.SymbolKind,
+				ParentName:     symbolChunk.ParentName,
+				IndexedAt:      now,
+				ChunkingMethod: result.Method,
+				FallbackReason: result.FallbackReason,
+			},
+		})
+	}
+
+	return chunks, entry, nil
 }
 
 func (i *Indexer) collectChunkIDs(paths []string) []string {

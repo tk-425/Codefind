@@ -17,7 +17,7 @@ from .routes.query import router as query_router
 from .routes.stats import router as stats_router
 from .routes.tokenize import router as tokenize_router
 from .security import init_sentry, request_body_limit_middleware
-from .services import OllamaService, TokenizerService
+from .services import IndexJobLockManager, OllamaService, TokenizerService
 
 
 @asynccontextmanager
@@ -33,10 +33,12 @@ async def lifespan(app: FastAPI):
         embed_model=settings.ollama_embed_model,
     )
     tokenizer = TokenizerService(model_name=settings.tokenizer_model)
+    index_locks = IndexJobLockManager()
     app.state.settings = settings
     app.state.vector_store = vector_store
     app.state.ollama = ollama
     app.state.tokenizer = tokenizer
+    app.state.index_locks = index_locks
     yield
     await ollama.close()
     await vector_store.close()

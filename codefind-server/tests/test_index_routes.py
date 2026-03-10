@@ -4,7 +4,13 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
 from codefind_server.middleware.auth import OrgContext, require_admin
-from codefind_server.routes.index import get_indexing_service, router as index_router
+from codefind_server.routes import index as index_routes
+from codefind_server.routes.index import (
+    get_index_lock_manager,
+    get_indexing_service,
+    router as index_router,
+)
+from codefind_server.services import IndexJobLockManager
 
 
 class DummyIndexingService:
@@ -67,6 +73,7 @@ def _make_app(service: DummyIndexingService) -> FastAPI:
     app = FastAPI()
     app.include_router(index_router)
     app.dependency_overrides[get_indexing_service] = lambda: service
+    app.dependency_overrides[get_index_lock_manager] = lambda: IndexJobLockManager()
     return app
 
 
@@ -137,6 +144,48 @@ def test_index_route_passes_org_scoped_chunks_to_service():
     assert service.index_calls[0]["request"].repo_id == "repo-a"
 
 
+def test_index_route_returns_conflict_when_repo_lock_is_active():
+    service = DummyIndexingService()
+    lock_manager = IndexJobLockManager()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+    app.dependency_overrides[get_index_lock_manager] = lambda: lock_manager
+
+    async def setup_lock():
+        await lock_manager.acquire("org_123:repo-a")
+
+    import asyncio
+
+    asyncio.run(setup_lock())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/index",
+            json={
+                "repo_id": "repo-a",
+                "chunks": [
+                    {
+                        "id": "chunk-1",
+                        "content": "func main() {}",
+                        "metadata": {
+                            "repo_id": "repo-a",
+                            "path": "main.go",
+                            "language": "go",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "content_hash": "hash-1",
+                            "status": "active",
+                            "chunking_method": "window",
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "An indexing job is already active for this repository."
+
+
 def test_chunk_status_route_updates_tombstones():
     service = DummyIndexingService()
     app = _make_app(service)
@@ -200,3 +249,61 @@ def test_purge_route_returns_purge_result():
     assert len(service.purge_calls) == 1
     assert service.purge_calls[0]["org_id"] == "org_123"
     assert service.purge_calls[0]["request"].older_than_days == 30
+
+
+def test_index_route_emits_audit_events(monkeypatch):
+    service = DummyIndexingService()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+    events = []
+    monkeypatch.setattr(index_routes, "emit_audit_event", lambda **kwargs: events.append(kwargs))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/index",
+            json={
+                "repo_id": "repo-a",
+                "chunks": [
+                    {
+                        "id": "chunk-1",
+                        "content": "func main() {}",
+                        "metadata": {
+                            "repo_id": "repo-a",
+                            "path": "main.go",
+                            "language": "go",
+                            "start_line": 1,
+                            "end_line": 1,
+                            "content_hash": "hash-1",
+                            "status": "active",
+                            "chunking_method": "window",
+                        },
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    assert [event["result"] for event in events] == ["start", "success"]
+    assert events[0]["event_type"] == "index.run"
+    assert events[1]["metadata"]["indexed_count"] == 1
+
+
+def test_purge_route_emits_audit_event(monkeypatch):
+    service = DummyIndexingService()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+    events = []
+    monkeypatch.setattr(index_routes, "emit_audit_event", lambda **kwargs: events.append(kwargs))
+
+    with TestClient(app) as client:
+        response = client.request(
+            "DELETE",
+            "/chunks/purge",
+            json={"repo_id": "repo-a", "older_than_days": 30},
+        )
+
+    assert response.status_code == 200
+    assert len(events) == 1
+    assert events[0]["event_type"] == "chunks.purge"
+    assert events[0]["result"] == "success"
+    assert events[0]["metadata"]["purged_count"] == 1
