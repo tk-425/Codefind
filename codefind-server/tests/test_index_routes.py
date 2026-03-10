@@ -413,3 +413,94 @@ def test_purge_route_emits_audit_event(monkeypatch):
     assert events[0]["event_type"] == "chunks.purge"
     assert events[0]["result"] == "success"
     assert events[0]["metadata"]["purged_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# index remove route tests
+# ---------------------------------------------------------------------------
+
+
+class DummyIndexingServiceWithClear(DummyIndexingService):
+    def __init__(self, *, cleared: bool = True) -> None:
+        super().__init__()
+        self.clear_calls: list[dict[str, object]] = []
+        self._cleared = cleared
+
+    async def clear_repo_index(self, *, org_id: str, repo_id: str):
+        self.clear_calls.append({"org_id": org_id, "repo_id": repo_id})
+        return {
+            "status": "ok",
+            "repo_id": repo_id,
+            "cleared": self._cleared,
+        }
+
+
+def test_index_remove_route_requires_admin():
+    app = _make_app(DummyIndexingServiceWithClear())
+    app.dependency_overrides[require_admin] = _forbid_admin
+
+    with TestClient(app) as client:
+        response = client.request(
+            "DELETE",
+            "/index/remove",
+            json={"repo_id": "repo-a"},
+        )
+
+    assert response.status_code == 403
+
+
+def test_index_remove_route_clears_repo_and_returns_response():
+    service = DummyIndexingServiceWithClear(cleared=True)
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+
+    with TestClient(app) as client:
+        response = client.request(
+            "DELETE",
+            "/index/remove",
+            json={"repo_id": "repo-a"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cleared"] is True
+    assert body["repo_id"] == "repo-a"
+    assert body["status"] == "ok"
+    assert len(service.clear_calls) == 1
+    assert service.clear_calls[0]["org_id"] == "org_123"
+    assert service.clear_calls[0]["repo_id"] == "repo-a"
+
+
+def test_index_remove_route_returns_not_cleared_when_repo_has_no_index():
+    service = DummyIndexingServiceWithClear(cleared=False)
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+
+    with TestClient(app) as client:
+        response = client.request(
+            "DELETE",
+            "/index/remove",
+            json={"repo_id": "repo-never-indexed"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["cleared"] is False
+
+
+def test_index_remove_route_emits_audit_events(monkeypatch):
+    service = DummyIndexingServiceWithClear(cleared=True)
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+    events = []
+    monkeypatch.setattr(index_routes, "emit_audit_event", lambda **kwargs: events.append(kwargs))
+
+    with TestClient(app) as client:
+        client.request(
+            "DELETE",
+            "/index/remove",
+            json={"repo_id": "repo-a"},
+        )
+
+    assert [e["result"] for e in events] == ["start", "success"]
+    assert events[0]["event_type"] == "index.remove"
+    assert events[1]["metadata"]["cleared"] is True

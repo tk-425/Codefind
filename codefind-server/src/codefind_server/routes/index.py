@@ -5,11 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from ..adapters.base import VectorStore
 from ..logging import emit_audit_event
 from ..middleware.auth import OrgContext, require_admin
-from ..models.requests import ChunkPurgeRequest, ChunkStatusUpdateRequest, IndexRequest
+from ..models.requests import ChunkPurgeRequest, ChunkStatusUpdateRequest, IndexRequest, RepoClearRequest
 from ..models.responses import (
     ChunkPurgeResponse,
     ChunkStatusUpdateResponse,
     IndexResponse,
+    RepoClearResponse,
     TombstonedChunkListResponse,
 )
 from ..services import IndexJobLockManager, IndexingService, OllamaService
@@ -122,6 +123,37 @@ async def list_tombstoned_chunks(
     indexing_service: IndexingService = Depends(get_indexing_service),
 ) -> TombstonedChunkListResponse:
     return await indexing_service.list_tombstoned_chunks(org_id=context.org_id, repo_id=repo_id)
+
+
+@router.delete("/index/remove", response_model=RepoClearResponse)
+async def remove_repo_index(
+    request: RepoClearRequest,
+    context: OrgContext = Depends(require_admin),
+    indexing_service: IndexingService = Depends(get_indexing_service),
+) -> RepoClearResponse:
+    emit_audit_event(
+        event_type="index.remove",
+        result="start",
+        repo_id=request.repo_id,
+        metadata={},
+    )
+    try:
+        response = await indexing_service.clear_repo_index(org_id=context.org_id, repo_id=request.repo_id)
+    except Exception as error:
+        emit_audit_event(
+            event_type="index.remove",
+            result="failure",
+            repo_id=request.repo_id,
+            metadata={"reason": str(error)},
+        )
+        raise
+    emit_audit_event(
+        event_type="index.remove",
+        result="success",
+        repo_id=request.repo_id,
+        metadata={"cleared": _response_value(response, "cleared")},
+    )
+    return response
 
 
 @router.delete("/chunks/purge", response_model=ChunkPurgeResponse)

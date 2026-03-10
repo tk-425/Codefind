@@ -140,3 +140,10 @@ class ChunkPurgeResponse(BaseModel):
     purged_count: int
     files: list[TombstonedChunkSummaryResponse] = []
     detail: str | None = None
+
+
+class RepoClearResponse(BaseModel):
+    status: str
+    repo_id: str
+    cleared: bool
+    detail: str | None = None

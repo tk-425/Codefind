@@ -195,3 +195,14 @@ type ChunkPurgeResponse struct {
 	Files       []TombstonedChunkSummary `json:"files"`
 	Detail      string                   `json:"detail,omitempty"`
 }
+
+type RepoClearRequest struct {
+	RepoID string `json:"repo_id"`
+}
+
+type RepoClearResponse struct {
+	Status  string `json:"status"`
+	RepoID  string `json:"repo_id"`
+	Cleared bool   `json:"cleared"`
+	Detail  string `json:"detail,omitempty"`
+}

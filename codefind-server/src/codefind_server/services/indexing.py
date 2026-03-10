@@ -9,6 +9,7 @@ from ..models.responses import (
     ChunkPurgeResponse,
     ChunkStatusUpdateResponse,
     IndexResponse,
+    RepoClearResponse,
     TombstonedChunkListResponse,
     TombstonedChunkSummaryResponse,
 )
@@ -150,6 +151,13 @@ class IndexingService:
             purged_count=len(matching_points),
             files=files,
         )
+
+    async def clear_repo_index(self, *, org_id: str, repo_id: str) -> RepoClearResponse:
+        collection = collection_name_for(org_id, repo_id)
+        if collection in await self._vector_store.list_collections():
+            await self._vector_store.delete_collection(collection)
+            return RepoClearResponse(status="ok", repo_id=repo_id, cleared=True)
+        return RepoClearResponse(status="ok", repo_id=repo_id, cleared=False)
 
     def _summarize_tombstoned_points(self, points) -> list[TombstonedChunkSummaryResponse]:
         by_path: OrderedDict[str, tuple[int, str | None]] = OrderedDict()
