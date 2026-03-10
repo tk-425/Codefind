@@ -62,3 +62,7 @@ class ChunkStatusUpdateRequest(BaseModel):
 class ChunkPurgeRequest(BaseModel):
     repo_id: str = Field(min_length=1, max_length=255)
     older_than_days: int = Field(ge=1, le=3650)
+
+
+class RepoClearRequest(BaseModel):
+    repo_id: str = Field(min_length=1, max_length=255)

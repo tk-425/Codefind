@@ -425,6 +425,16 @@ func newTokenizeCommand(configPath *string) *cobra.Command {
 }
 
 func newIndexCommand(configPath *string) *cobra.Command {
+	indexCmd := &cobra.Command{
+		Use:   "index",
+		Short: "Manage repo indexing for the current organization",
+	}
+	indexCmd.AddCommand(newIndexRunCommand(configPath))
+	indexCmd.AddCommand(newIndexRemoveCommand(configPath))
+	return indexCmd
+}
+
+func newIndexRunCommand(configPath *string) *cobra.Command {
 	var (
 		repoID      string
 		repoPath    string
@@ -435,7 +445,7 @@ func newIndexCommand(configPath *string) *cobra.Command {
 	)
 
 	command := &cobra.Command{
-		Use:   "index",
+		Use:   "run",
 		Short: "Index a repo for the current organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if strings.TrimSpace(repoID) == "" {
@@ -493,6 +503,49 @@ func newIndexCommand(configPath *string) *cobra.Command {
 	command.Flags().BoolVar(&window, "window", false, "use window chunking only")
 	command.Flags().BoolVar(&retryLSP, "retry-lsp", false, "retry LSP chunking for previously degraded unchanged files")
 	command.Flags().IntVar(&concurrency, "concurrency", 1, "parallel file processing inside one indexing job")
+	return command
+}
+
+func newIndexRemoveCommand(configPath *string) *cobra.Command {
+	var repoID string
+
+	command := &cobra.Command{
+		Use:   "remove",
+		Short: "Remove all indexed backend data for a repo and reset its local manifest",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if strings.TrimSpace(repoID) == "" {
+				return errors.New("--repo-id is required")
+			}
+
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			if err != nil {
+				return err
+			}
+			cfg, err := loadRequiredConfig(*configPath)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(cfg.ActiveOrgID) == "" {
+				return errors.New("active_org_id is not configured; run 'codefind auth login'")
+			}
+
+			response, err := apiClient.ClearRepo(cmd.Context(), api.RepoClearRequest{RepoID: repoID})
+			if err != nil {
+				return err
+			}
+
+			if resetErr := indexer.ResetManifest(cfg.ActiveOrgID, repoID); resetErr != nil {
+				if writeErr := writeJSON(cmd.OutOrStdout(), response); writeErr != nil {
+					return writeErr
+				}
+				return fmt.Errorf("backend cleared but manifest reset failed: %w", resetErr)
+			}
+
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+
+	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to remove from the index")
 	return command
 }
 

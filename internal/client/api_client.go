@@ -128,6 +128,14 @@ func (c *Client) PurgeChunks(ctx context.Context, request api.ChunkPurgeRequest)
 	return payload, nil
 }
 
+func (c *Client) ClearRepo(ctx context.Context, request api.RepoClearRequest) (api.RepoClearResponse, error) {
+	var payload api.RepoClearResponse
+	if err := c.doJSON(ctx, http.MethodDelete, "/index/remove", request, http.StatusOK, &payload); err != nil {
+		return api.RepoClearResponse{}, err
+	}
+	return payload, nil
+}
+
 func (c *Client) GetOrganizations(ctx context.Context) (api.OrgListResponse, error) {
 	var payload api.OrgListResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/orgs", nil, http.StatusOK, &payload); err != nil {

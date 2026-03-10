@@ -307,7 +307,7 @@ func TestIndexCommandPostsIndexedChunks(t *testing.T) {
 	output, err := executeCommand(
 		t,
 		"--config", configPath,
-		"index",
+		"index", "run",
 		"--repo-id", "repo-a",
 		"--repo-path", repoDir,
 		"--window",
@@ -634,5 +634,88 @@ func TestListCommandRenewsExpiredTokenViaBrowserFlow(t *testing.T) {
 	}
 	if claims.OrgID != "org_123" || claims.OrgRole != "org:admin" {
 		t.Fatalf("claims = %+v, want renewed org claims", claims)
+	}
+}
+
+func TestIndexRemoveCommandCallsClearRepoAndResetsManifest(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	var sawMethod, sawPath string
+	var sawBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawMethod = r.Method
+		sawPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&sawBody); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","repo_id":"repo-a","cleared":true}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	output, err := executeCommand(
+		t,
+		"--config", configPath,
+		"index", "remove",
+		"--repo-id", "repo-a",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v\noutput=%s", err, output)
+	}
+	if sawMethod != http.MethodDelete || sawPath != "/index/remove" {
+		t.Fatalf("saw %s %s, want DELETE /index/remove", sawMethod, sawPath)
+	}
+	if sawBody["repo_id"] != "repo-a" {
+		t.Fatalf("body repo_id = %v", sawBody["repo_id"])
+	}
+	if !strings.Contains(output, `"cleared": true`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestIndexRemoveCommandDoesNotResetManifestOnBackendFailure(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// Seed a manifest with file state so we can verify it is NOT reset.
+	manifestPath := filepath.Join(homeDir, ".codefind", "manifests", "org_123", "repo-a.json")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(`{"schema_version":1,"repo_id":"repo-a","org_id":"org_123","files":{"main.go":{}}}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	_, err := executeCommand(
+		t,
+		"--config", configPath,
+		"index", "remove",
+		"--repo-id", "repo-a",
+	)
+	if err == nil {
+		t.Fatal("expected error from backend failure, got nil")
+	}
+
+	// Manifest must remain unchanged — still has the original file entry.
+	content, readErr := os.ReadFile(manifestPath)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+	if !strings.Contains(string(content), `"main.go"`) {
+		t.Fatalf("manifest was reset despite backend failure: %s", content)
 	}
 }

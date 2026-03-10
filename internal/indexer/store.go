@@ -105,6 +105,13 @@ func SaveManifest(manifest *Manifest) error {
 	return nil
 }
 
+// ResetManifest writes a clean default manifest for the given org/repo pair,
+// discarding any previously recorded file state. Call only after a successful
+// backend repo-clear to ensure local and remote state stay consistent.
+func ResetManifest(orgID, repoID string) error {
+	return SaveManifest(defaultManifest(orgID, repoID))
+}
+
 func defaultManifest(orgID, repoID string) *Manifest {
 	return &Manifest{
 		SchemaVersion: ManifestSchemaVersion,
