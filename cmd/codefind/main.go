@@ -17,6 +17,7 @@ import (
 	"github.com/tk-425/Codefind/internal/config"
 	"github.com/tk-425/Codefind/internal/indexer"
 	"github.com/tk-425/Codefind/internal/keychain"
+	"github.com/tk-425/Codefind/internal/lsp"
 	"github.com/tk-425/Codefind/internal/query"
 	"github.com/tk-425/Codefind/internal/stats"
 	"github.com/tk-425/Codefind/pkg/api"
@@ -547,22 +548,45 @@ func newCleanupCommand(configPath *string) *cobra.Command {
 func newLSPCommand(_ *string) *cobra.Command {
 	lspCmd := &cobra.Command{
 		Use:   "lsp",
-		Short: "Inspect or test LSP availability for indexing",
+		Short: "Inspect LSP availability for indexing",
 	}
 
 	lspCmd.AddCommand(&cobra.Command{
 		Use:   "status",
 		Short: "Show the current LSP status for supported languages",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return errors.New("lsp status is not implemented yet")
-		},
-	})
-	lspCmd.AddCommand(&cobra.Command{
-		Use:   "test <language>",
-		Short: "Test LSP document-symbol extraction for one language",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return errors.New("lsp test is not implemented yet")
+			type languageStatus struct {
+				Language   string `json:"language"`
+				Name       string `json:"name"`
+				Executable string `json:"executable"`
+				Path       string `json:"path,omitempty"`
+				Available  bool   `json:"available"`
+			}
+			type statusResponse struct {
+				SupportedCount int              `json:"supported_count"`
+				AvailableCount int              `json:"available_count"`
+				Languages      []languageStatus `json:"languages"`
+			}
+
+			discovered := lsp.DiscoverAvailability()
+			response := statusResponse{
+				SupportedCount: len(discovered),
+				Languages:      make([]languageStatus, 0, len(discovered)),
+			}
+			for _, entry := range discovered {
+				if entry.Available {
+					response.AvailableCount++
+				}
+				response.Languages = append(response.Languages, languageStatus{
+					Language:   entry.Language,
+					Name:       entry.Name,
+					Executable: entry.Executable,
+					Path:       entry.Path,
+					Available:  entry.Available,
+				})
+			}
+
+			return writeJSON(cmd.OutOrStdout(), response)
 		},
 	})
 
