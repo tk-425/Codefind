@@ -1,11 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request, status
 
 from ..adapters.base import VectorStore
 from ..middleware.auth import OrgContext, require_admin
 from ..models.requests import ChunkPurgeRequest, ChunkStatusUpdateRequest, IndexRequest
-from ..models.responses import ChunkPurgeResponse, ChunkStatusUpdateResponse, IndexResponse
+from ..models.responses import (
+    ChunkPurgeResponse,
+    ChunkStatusUpdateResponse,
+    IndexResponse,
+    TombstonedChunkListResponse,
+)
 from ..services import IndexingService, OllamaService
 
 
@@ -45,15 +50,19 @@ async def update_chunk_status(
     return await indexing_service.update_chunk_status(org_id=context.org_id, request=request)
 
 
+@router.get("/chunks/tombstoned", response_model=TombstonedChunkListResponse)
+async def list_tombstoned_chunks(
+    repo_id: str,
+    context: OrgContext = Depends(require_admin),
+    indexing_service: IndexingService = Depends(get_indexing_service),
+) -> TombstonedChunkListResponse:
+    return await indexing_service.list_tombstoned_chunks(org_id=context.org_id, repo_id=repo_id)
+
+
 @router.delete("/chunks/purge", response_model=ChunkPurgeResponse)
 async def purge_chunks(
     request: ChunkPurgeRequest,
     context: OrgContext = Depends(require_admin),
+    indexing_service: IndexingService = Depends(get_indexing_service),
 ) -> ChunkPurgeResponse:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail=(
-            "Phase 8 Slice 1 only defines the /chunks/purge contract. "
-            "Chunk purge logic is not implemented yet."
-        ),
-    )
+    return await indexing_service.purge_tombstoned_chunks(org_id=context.org_id, request=request)

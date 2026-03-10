@@ -19,6 +19,12 @@ class SearchResult:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class StoredPoint:
+    id: str
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
 class VectorStore(ABC):
     @abstractmethod
     async def healthcheck(self) -> bool:
@@ -65,6 +71,15 @@ class VectorStore(ABC):
 
     @abstractmethod
     async def count(self, collection: str, filters: dict[str, Any]) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def scroll(
+        self,
+        collection: str,
+        filters: dict[str, Any],
+        limit: int = 1000,
+    ) -> list[StoredPoint]:
         raise NotImplementedError
 
     async def close(self) -> None:

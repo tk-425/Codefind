@@ -111,6 +111,15 @@ func (c *Client) UpdateChunkStatus(
 	return payload, nil
 }
 
+func (c *Client) ListTombstonedChunks(ctx context.Context, repoID string) (api.TombstonedChunkListResponse, error) {
+	var payload api.TombstonedChunkListResponse
+	requestPath := "/chunks/tombstoned?repo_id=" + url.QueryEscape(repoID)
+	if err := c.doJSON(ctx, http.MethodGet, requestPath, nil, http.StatusOK, &payload); err != nil {
+		return api.TombstonedChunkListResponse{}, err
+	}
+	return payload, nil
+}
+
 func (c *Client) PurgeChunks(ctx context.Context, request api.ChunkPurgeRequest) (api.ChunkPurgeResponse, error) {
 	var payload api.ChunkPurgeResponse
 	if err := c.doJSON(ctx, http.MethodDelete, "/chunks/purge", request, http.StatusOK, &payload); err != nil {
