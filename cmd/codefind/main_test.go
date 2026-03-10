@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,6 +84,19 @@ func writeTestConfig(t *testing.T, serverURL string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := config.Save(path, config.Config{ServerURL: serverURL, WebAppURL: "http://localhost:5173"}); err != nil {
+		t.Fatalf("config.Save() error = %v", err)
+	}
+	return path
+}
+
+func writeTestConfigWithOrg(t *testing.T, serverURL, orgID string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := config.Save(path, config.Config{
+		ServerURL:   serverURL,
+		WebAppURL:   "http://localhost:5173",
+		ActiveOrgID: orgID,
+	}); err != nil {
 		t.Fatalf("config.Save() error = %v", err)
 	}
 	return path
@@ -239,6 +253,75 @@ func TestAdminRemoveCommandCallsDelete(t *testing.T) {
 		t.Fatalf("saw %s %s", method, path)
 	}
 	if !strings.Contains(output, `"user_id": "user_456"`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestIndexCommandPostsIndexedChunks(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	sourcePath := filepath.Join(repoDir, "main.go")
+	if err := os.WriteFile(sourcePath, []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var method string
+	var path string
+	var sawChunkingMethod bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		switch r.URL.Path {
+		case "/index":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			chunks, ok := body["chunks"].([]any)
+			if !ok || len(chunks) == 0 {
+				t.Fatalf("chunks = %#v", body["chunks"])
+			}
+			firstChunk, ok := chunks[0].(map[string]any)
+			if !ok {
+				t.Fatalf("first chunk = %#v", chunks[0])
+			}
+			metadata, ok := firstChunk["metadata"].(map[string]any)
+			if !ok {
+				t.Fatalf("metadata = %#v", firstChunk["metadata"])
+			}
+			sawChunkingMethod = metadata["chunking_method"] == "window"
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","repo_id":"repo-a","indexed_count":1,"accepted":true}`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	output, err := executeCommand(
+		t,
+		"--config", configPath,
+		"index",
+		"--repo-id", "repo-a",
+		"--repo-path", repoDir,
+		"--window",
+	)
+	if err != nil {
+		t.Fatalf("Execute() error = %v\noutput=%s", err, output)
+	}
+	if method != http.MethodPost || path != "/index" {
+		t.Fatalf("saw %s %s", method, path)
+	}
+	if !sawChunkingMethod {
+		t.Fatalf("expected chunking_method=window in /index payload")
+	}
+	if !strings.Contains(output, `"indexed_count": 1`) {
 		t.Fatalf("output = %q", output)
 	}
 }

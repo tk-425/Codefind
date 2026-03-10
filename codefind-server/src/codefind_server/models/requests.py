@@ -28,11 +28,29 @@ class TokenizeRequest(BaseModel):
 
 class IndexRequest(BaseModel):
     repo_id: str = Field(min_length=1, max_length=255)
-    repo_path: str = Field(min_length=1, max_length=4096)
-    force: bool = False
-    window: bool = False
-    retry_lsp: bool = False
-    concurrency: int = Field(default=1, ge=1, le=64)
+    chunks: list["IndexChunkRequest"] = Field(min_length=1)
+
+
+class ChunkMetadataRequest(BaseModel):
+    repo_id: str = Field(min_length=1, max_length=255)
+    path: str = Field(min_length=1, max_length=4096)
+    language: str | None = Field(default=None, max_length=128)
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    content_hash: str = Field(min_length=1, max_length=128)
+    status: Literal["active", "tombstoned"]
+    symbol_name: str | None = Field(default=None, max_length=512)
+    symbol_kind: str | None = Field(default=None, max_length=128)
+    parent_name: str | None = Field(default=None, max_length=512)
+    indexed_at: str | None = Field(default=None, max_length=128)
+    chunking_method: str | None = Field(default=None, max_length=32)
+    fallback_reason: str | None = Field(default=None, max_length=128)
+
+
+class IndexChunkRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=255)
+    content: str = Field(min_length=1)
+    metadata: ChunkMetadataRequest
 
 
 class ChunkStatusUpdateRequest(BaseModel):

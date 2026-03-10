@@ -29,6 +29,10 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def ensure_collection(self, collection: str, vector_size: int) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     async def query(
         self,
         collection: str,

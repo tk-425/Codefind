@@ -22,4 +22,5 @@ type ManifestFile struct {
 	FallbackReason     string `json:"fallback_reason,omitempty"`
 	ChunkingVersion    string `json:"chunking_version,omitempty"`
 	LastIndexedAt      string `json:"last_indexed_at,omitempty"`
+	ChunkIDs           []string `json:"chunk_ids,omitempty"`
 }

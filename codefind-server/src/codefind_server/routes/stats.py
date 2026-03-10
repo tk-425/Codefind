@@ -13,7 +13,7 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 
 
 def _repo_count_filters() -> dict[str, object]:
-    return {}
+    return {"status": "active"}
 
 
 @router.get("", response_model=StatsResponse)
