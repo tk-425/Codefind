@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -223,5 +224,54 @@ func TestIndexerIndexRetryLSPSkipsBenignWindowFallbacks(t *testing.T) {
 	}
 	if len(store.indexRequests) != 0 {
 		t.Fatalf("Index requests = %#v, want none", store.indexRequests)
+	}
+}
+
+func TestIndexerIndexSupportsDeterministicParallelChunkBuilds(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "a.go"), []byte("package main\n\nfunc a() {}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(a.go) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "b.go"), []byte("package main\n\nfunc b() {}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(b.go) error = %v", err)
+	}
+
+	indexer, err := New(repoDir, &Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		RepoID:        "repo-a",
+		OrgID:         "org_123",
+		Files:         map[string]ManifestFile{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	store := &fakeChunkStore{}
+	response, err := indexer.Index(context.Background(), RunOptions{
+		RepoID:      "repo-a",
+		OrgID:       "org_123",
+		Force:       true,
+		Window:      true,
+		Concurrency: 2,
+	}, store)
+	if err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+	if response.IndexedCount == 0 {
+		t.Fatalf("Index() = %#v, want indexed chunks", response)
+	}
+	if len(store.indexRequests) != 1 {
+		t.Fatalf("Index requests = %d, want 1", len(store.indexRequests))
+	}
+
+	paths := make([]string, 0, len(store.indexRequests[0].Chunks))
+	for _, chunk := range store.indexRequests[0].Chunks {
+		paths = append(paths, chunk.Metadata.Path)
+	}
+	if !sort.StringsAreSorted(paths) {
+		t.Fatalf("chunk paths should be deterministic and sorted, got %#v", paths)
 	}
 }
