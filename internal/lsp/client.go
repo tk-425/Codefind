@@ -8,9 +8,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/tk-425/Codefind/internal/pathutil"
 )
 
 type Client struct {
@@ -75,6 +78,125 @@ type InitializeResult struct {
 
 type ServerCapabilities struct {
 	DocumentSymbolProvider any `json:"documentSymbolProvider"`
+}
+
+type TextDocumentIdentifier struct {
+	URI string `json:"uri"`
+}
+
+type TextDocumentItem struct {
+	URI        string `json:"uri"`
+	LanguageID string `json:"languageId"`
+	Version    int    `json:"version"`
+	Text       string `json:"text"`
+}
+
+type DidOpenTextDocumentParams struct {
+	TextDocument TextDocumentItem `json:"textDocument"`
+}
+
+type DidCloseTextDocumentParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+type DocumentSymbolParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+}
+
+type DocumentSymbol struct {
+	Name           string           `json:"name"`
+	Detail         string           `json:"detail,omitempty"`
+	Kind           SymbolKind       `json:"kind"`
+	Range          Range            `json:"range"`
+	SelectionRange Range            `json:"selectionRange"`
+	Children       []DocumentSymbol `json:"children,omitempty"`
+}
+
+type SymbolInformation struct {
+	Name     string     `json:"name"`
+	Kind     SymbolKind `json:"kind"`
+	Location Location   `json:"location"`
+}
+
+type Location struct {
+	URI   string `json:"uri"`
+	Range Range  `json:"range"`
+}
+
+type Range struct {
+	Start Position `json:"start"`
+	End   Position `json:"end"`
+}
+
+type Position struct {
+	Line      int `json:"line"`
+	Character int `json:"character"`
+}
+
+type SymbolKind int
+
+const (
+	SymbolKindFile          SymbolKind = 1
+	SymbolKindModule        SymbolKind = 2
+	SymbolKindNamespace     SymbolKind = 3
+	SymbolKindPackage       SymbolKind = 4
+	SymbolKindClass         SymbolKind = 5
+	SymbolKindMethod        SymbolKind = 6
+	SymbolKindProperty      SymbolKind = 7
+	SymbolKindField         SymbolKind = 8
+	SymbolKindConstructor   SymbolKind = 9
+	SymbolKindEnum          SymbolKind = 10
+	SymbolKindInterface     SymbolKind = 11
+	SymbolKindFunction      SymbolKind = 12
+	SymbolKindVariable      SymbolKind = 13
+	SymbolKindConstant      SymbolKind = 14
+	SymbolKindString        SymbolKind = 15
+	SymbolKindNumber        SymbolKind = 16
+	SymbolKindBoolean       SymbolKind = 17
+	SymbolKindArray         SymbolKind = 18
+	SymbolKindObject        SymbolKind = 19
+	SymbolKindKey           SymbolKind = 20
+	SymbolKindNull          SymbolKind = 21
+	SymbolKindEnumMember    SymbolKind = 22
+	SymbolKindStruct        SymbolKind = 23
+	SymbolKindEvent         SymbolKind = 24
+	SymbolKindOperator      SymbolKind = 25
+	SymbolKindTypeParameter SymbolKind = 26
+)
+
+func (sk SymbolKind) String() string {
+	kinds := map[SymbolKind]string{
+		SymbolKindFile:          "file",
+		SymbolKindModule:        "module",
+		SymbolKindNamespace:     "namespace",
+		SymbolKindPackage:       "package",
+		SymbolKindClass:         "class",
+		SymbolKindMethod:        "method",
+		SymbolKindProperty:      "property",
+		SymbolKindField:         "field",
+		SymbolKindConstructor:   "constructor",
+		SymbolKindEnum:          "enum",
+		SymbolKindInterface:     "interface",
+		SymbolKindFunction:      "function",
+		SymbolKindVariable:      "variable",
+		SymbolKindConstant:      "constant",
+		SymbolKindString:        "string",
+		SymbolKindNumber:        "number",
+		SymbolKindBoolean:       "boolean",
+		SymbolKindArray:         "array",
+		SymbolKindObject:        "object",
+		SymbolKindKey:           "key",
+		SymbolKindNull:          "null",
+		SymbolKindEnumMember:    "enum_member",
+		SymbolKindStruct:        "struct",
+		SymbolKindEvent:         "event",
+		SymbolKindOperator:      "operator",
+		SymbolKindTypeParameter: "type_parameter",
+	}
+	if s, ok := kinds[sk]; ok {
+		return s
+	}
+	return "unknown"
 }
 
 func NewClient(language, rootPath string) (*Client, error) {
@@ -173,6 +295,72 @@ func (c *Client) IsAlive() bool {
 		return false
 	}
 	return c.cmd.ProcessState == nil
+}
+
+func (c *Client) DocumentSymbols(ctx context.Context, filePath string) ([]DocumentSymbol, error) {
+	if !pathutil.IsWithinDir(c.rootPath, filePath) {
+		return nil, fmt.Errorf("file path outside repo root")
+	}
+
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	uri := "file://" + absPath
+	openParams := DidOpenTextDocumentParams{
+		TextDocument: TextDocumentItem{
+			URI:        uri,
+			LanguageID: c.getLanguageID(),
+			Version:    1,
+			Text:       string(content),
+		},
+	}
+	if err := c.notify("textDocument/didOpen", openParams); err != nil {
+		return nil, fmt.Errorf("didOpen failed: %w", err)
+	}
+
+	var rawResult json.RawMessage
+	if err := c.call(ctx, "textDocument/documentSymbol", DocumentSymbolParams{
+		TextDocument: TextDocumentIdentifier{URI: uri},
+	}, &rawResult); err != nil {
+		return nil, fmt.Errorf("documentSymbol failed: %w", err)
+	}
+
+	_ = c.notify("textDocument/didClose", DidCloseTextDocumentParams{
+		TextDocument: TextDocumentIdentifier{URI: uri},
+	})
+
+	var symbols []DocumentSymbol
+	if err := json.Unmarshal(rawResult, &symbols); err != nil {
+		var infos []SymbolInformation
+		if err2 := json.Unmarshal(rawResult, &infos); err2 != nil {
+			return nil, fmt.Errorf("failed to parse symbols: %w", err)
+		}
+		for _, info := range infos {
+			symbols = append(symbols, DocumentSymbol{
+				Name:  info.Name,
+				Kind:  info.Kind,
+				Range: info.Location.Range,
+			})
+		}
+	}
+
+	return symbols, nil
+}
+
+func (c *Client) getLanguageID() string {
+	switch c.language {
+	case "typescript/javascript":
+		return "typescript"
+	default:
+		return c.language
+	}
 }
 
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
