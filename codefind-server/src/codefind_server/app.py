@@ -11,6 +11,7 @@ from .routes.admin import router as admin_router
 from .routes.auth import router as auth_router
 from .routes.collections import router as collections_router
 from .routes.health import router as health_router
+from .routes.index import router as index_router
 from .routes.orgs import router as orgs_router
 from .routes.query import router as query_router
 from .routes.stats import router as stats_router
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(collections_router)
     app.include_router(health_router)
+    app.include_router(index_router)
     app.include_router(orgs_router)
     app.include_router(query_router)
     app.include_router(stats_router)
