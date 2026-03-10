@@ -261,6 +261,37 @@ func TestClientIndexPostsChunksAndAcceptsOK(t *testing.T) {
 	}
 }
 
+func TestClientListTombstonedChunksQueriesRepoID(t *testing.T) {
+	t.Parallel()
+
+	var method string
+	var rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","repo_id":"repo-a","found_count":2,"files":[{"path":"main.go","chunk_count":2,"tombstoned_at":"2026-03-09T00:00:00Z"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, fakeTokenLoader{token: "token-123"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	response, err := client.ListTombstonedChunks(context.Background(), "repo-a")
+	if err != nil {
+		t.Fatalf("ListTombstonedChunks() error = %v", err)
+	}
+
+	if method != http.MethodGet || rawQuery != "repo_id=repo-a" {
+		t.Fatalf("saw %s ?%s", method, rawQuery)
+	}
+	if response.FoundCount != 2 || len(response.Files) != 1 || response.Files[0].Path != "main.go" {
+		t.Fatalf("ListTombstonedChunks() = %#v", response)
+	}
+}
+
 func TestClientQueryPostsJSONBody(t *testing.T) {
 	t.Parallel()
 

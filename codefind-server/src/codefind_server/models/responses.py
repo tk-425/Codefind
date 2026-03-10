@@ -119,8 +119,24 @@ class ChunkStatusUpdateResponse(BaseModel):
     detail: str | None = None
 
 
+class TombstonedChunkSummaryResponse(BaseModel):
+    path: str
+    chunk_count: int
+    tombstoned_at: str | None = None
+
+
+class TombstonedChunkListResponse(BaseModel):
+    status: str
+    repo_id: str
+    found_count: int
+    files: list[TombstonedChunkSummaryResponse]
+    detail: str | None = None
+
+
 class ChunkPurgeResponse(BaseModel):
     status: str
     repo_id: str
+    found_count: int = 0
     purged_count: int
+    files: list[TombstonedChunkSummaryResponse] = []
     detail: str | None = None

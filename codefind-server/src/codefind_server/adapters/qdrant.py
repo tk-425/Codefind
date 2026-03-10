@@ -4,7 +4,7 @@ from typing import Any
 
 from qdrant_client import AsyncQdrantClient, models
 
-from .base import SearchResult, VectorPoint, VectorStore
+from .base import SearchResult, StoredPoint, VectorPoint, VectorStore
 
 
 class QdrantAdapter(VectorStore):
@@ -103,6 +103,27 @@ class QdrantAdapter(VectorStore):
             exact=True,
         )
         return response.count
+
+    async def scroll(
+        self,
+        collection: str,
+        filters: dict[str, Any],
+        limit: int = 1000,
+    ) -> list[StoredPoint]:
+        points, _ = await self._client.scroll(
+            collection_name=collection,
+            scroll_filter=self._build_filter(filters),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        return [
+            StoredPoint(
+                id=str(point.id),
+                payload=point.payload or {},
+            )
+            for point in points
+        ]
 
     async def close(self) -> None:
         await self._client.close()

@@ -326,6 +326,69 @@ func TestIndexCommandPostsIndexedChunks(t *testing.T) {
 	}
 }
 
+func TestCleanupListCommandCallsTombstonedEndpoint(t *testing.T) {
+	var method string
+	var path string
+	var rawQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		rawQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","repo_id":"repo-a","found_count":1,"files":[{"path":"main.go","chunk_count":1,"tombstoned_at":"2026-03-09T00:00:00Z"}]}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "cleanup", "--repo-id", "repo-a", "--list")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if method != http.MethodGet || path != "/chunks/tombstoned" || rawQuery != "repo_id=repo-a" {
+		t.Fatalf("saw %s %s?%s", method, path, rawQuery)
+	}
+	if !strings.Contains(output, `"found_count": 1`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestCleanupPurgeCommandCallsDeleteEndpoint(t *testing.T) {
+	var method string
+	var path string
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","repo_id":"repo-a","found_count":2,"purged_count":2,"files":[{"path":"main.go","chunk_count":2,"tombstoned_at":"2026-03-01T00:00:00Z"}]}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager("token-123", nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "cleanup", "--repo-id", "repo-a", "--older-than", "30")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if method != http.MethodDelete || path != "/chunks/purge" {
+		t.Fatalf("saw %s %s", method, path)
+	}
+	if requestBody["older_than_days"] != float64(30) || requestBody["repo_id"] != "repo-a" {
+		t.Fatalf("request body = %#v", requestBody)
+	}
+	if !strings.Contains(output, `"purged_count": 2`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
 func TestListCommandCallsCollectionsEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/collections" {

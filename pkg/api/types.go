@@ -168,14 +168,30 @@ type ChunkStatusUpdateResponse struct {
 	Detail       string `json:"detail,omitempty"`
 }
 
+type TombstonedChunkSummary struct {
+	Path         string `json:"path"`
+	ChunkCount   int    `json:"chunk_count"`
+	TombstonedAt string `json:"tombstoned_at,omitempty"`
+}
+
+type TombstonedChunkListResponse struct {
+	Status     string                   `json:"status"`
+	RepoID     string                   `json:"repo_id"`
+	FoundCount int                      `json:"found_count"`
+	Files      []TombstonedChunkSummary `json:"files"`
+	Detail     string                   `json:"detail,omitempty"`
+}
+
 type ChunkPurgeRequest struct {
 	RepoID        string `json:"repo_id"`
 	OlderThanDays int    `json:"older_than_days"`
 }
 
 type ChunkPurgeResponse struct {
-	Status      string `json:"status"`
-	RepoID      string `json:"repo_id"`
-	PurgedCount int    `json:"purged_count"`
-	Detail      string `json:"detail,omitempty"`
+	Status      string                   `json:"status"`
+	RepoID      string                   `json:"repo_id"`
+	FoundCount  int                      `json:"found_count"`
+	PurgedCount int                      `json:"purged_count"`
+	Files       []TombstonedChunkSummary `json:"files"`
+	Detail      string                   `json:"detail,omitempty"`
 }

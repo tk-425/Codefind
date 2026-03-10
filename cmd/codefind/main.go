@@ -515,13 +515,17 @@ func newCleanupCommand(configPath *string) *cobra.Command {
 			if !listMode && olderThanDays == 0 {
 				return errors.New("either --list or --older-than must be provided")
 			}
-			if listMode {
-				return errors.New("cleanup listing is not implemented yet")
-			}
 
 			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
+			}
+			if listMode {
+				response, err := apiClient.ListTombstonedChunks(cmd.Context(), repoID)
+				if err != nil {
+					return err
+				}
+				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			response, err := apiClient.PurgeChunks(cmd.Context(), api.ChunkPurgeRequest{
 				RepoID:        repoID,

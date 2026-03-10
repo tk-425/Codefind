@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from collections import OrderedDict
 
 from ..adapters.base import VectorPoint, VectorStore
-from ..models.requests import ChunkStatusUpdateRequest, IndexRequest
-from ..models.responses import ChunkStatusUpdateResponse, IndexResponse
+from ..models.requests import ChunkPurgeRequest, ChunkStatusUpdateRequest, IndexRequest
+from ..models.responses import (
+    ChunkPurgeResponse,
+    ChunkStatusUpdateResponse,
+    IndexResponse,
+    TombstonedChunkListResponse,
+    TombstonedChunkSummaryResponse,
+)
 from .collection_scope import collection_name_for
 from .ollama import OllamaService
 
@@ -72,3 +79,90 @@ class IndexingService:
             repo_id=request.repo_id,
             updated_count=len(request.chunk_ids),
         )
+
+    async def list_tombstoned_chunks(
+        self,
+        *,
+        org_id: str,
+        repo_id: str,
+    ) -> TombstonedChunkListResponse:
+        collection = collection_name_for(org_id, repo_id)
+        if collection not in await self._vector_store.list_collections():
+            return TombstonedChunkListResponse(
+                status="ok",
+                repo_id=repo_id,
+                found_count=0,
+                files=[],
+            )
+        points = await self._vector_store.scroll(collection, {"status": "tombstoned"})
+        files = self._summarize_tombstoned_points(points)
+        return TombstonedChunkListResponse(
+            status="ok",
+            repo_id=repo_id,
+            found_count=len(points),
+            files=files,
+        )
+
+    async def purge_tombstoned_chunks(
+        self,
+        *,
+        org_id: str,
+        request: ChunkPurgeRequest,
+    ) -> ChunkPurgeResponse:
+        collection = collection_name_for(org_id, request.repo_id)
+        if collection not in await self._vector_store.list_collections():
+            return ChunkPurgeResponse(
+                status="ok",
+                repo_id=request.repo_id,
+                found_count=0,
+                purged_count=0,
+                files=[],
+            )
+        points = await self._vector_store.scroll(collection, {"status": "tombstoned"})
+
+        cutoff = datetime.now(UTC).timestamp() - (request.older_than_days * 86400)
+        matching_points = []
+        for point in points:
+            tombstoned_at = point.payload.get("tombstoned_at")
+            if not isinstance(tombstoned_at, str):
+                continue
+            try:
+                tombstoned_ts = datetime.fromisoformat(tombstoned_at.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                continue
+            if tombstoned_ts <= cutoff:
+                matching_points.append(point)
+
+        files = self._summarize_tombstoned_points(matching_points)
+        if matching_points:
+            await self._vector_store.delete(collection, [point.id for point in matching_points])
+
+        return ChunkPurgeResponse(
+            status="ok",
+            repo_id=request.repo_id,
+            found_count=len(matching_points),
+            purged_count=len(matching_points),
+            files=files,
+        )
+
+    def _summarize_tombstoned_points(self, points) -> list[TombstonedChunkSummaryResponse]:
+        by_path: OrderedDict[str, tuple[int, str | None]] = OrderedDict()
+        for point in points:
+            path = point.payload.get("path")
+            if not isinstance(path, str) or not path:
+                path = "unknown"
+
+            tombstoned_at = point.payload.get("tombstoned_at")
+            tombstoned_at_value = tombstoned_at if isinstance(tombstoned_at, str) else None
+
+            chunk_count, existing_tombstoned_at = by_path.get(path, (0, tombstoned_at_value))
+            by_path[path] = (chunk_count + 1, existing_tombstoned_at or tombstoned_at_value)
+
+        return [
+            TombstonedChunkSummaryResponse(
+                path=path,
+                chunk_count=chunk_count,
+                tombstoned_at=tombstoned_at,
+            )
+            for path, (chunk_count, tombstoned_at) in by_path.items()
+        ]

@@ -11,6 +11,8 @@ class DummyIndexingService:
     def __init__(self) -> None:
         self.index_calls: list[dict[str, object]] = []
         self.status_calls: list[dict[str, object]] = []
+        self.list_calls: list[dict[str, object]] = []
+        self.purge_calls: list[dict[str, object]] = []
 
     async def index_chunks(self, *, org_id: str, request):
         self.index_calls.append({"org_id": org_id, "request": request})
@@ -27,6 +29,29 @@ class DummyIndexingService:
             "status": "ok",
             "repo_id": request.repo_id,
             "updated_count": len(request.chunk_ids),
+        }
+
+    async def list_tombstoned_chunks(self, *, org_id: str, repo_id: str):
+        self.list_calls.append({"org_id": org_id, "repo_id": repo_id})
+        return {
+            "status": "ok",
+            "repo_id": repo_id,
+            "found_count": 2,
+            "files": [
+                {"path": "main.go", "chunk_count": 2, "tombstoned_at": "2026-03-09T00:00:00Z"}
+            ],
+        }
+
+    async def purge_tombstoned_chunks(self, *, org_id: str, request):
+        self.purge_calls.append({"org_id": org_id, "request": request})
+        return {
+            "status": "ok",
+            "repo_id": request.repo_id,
+            "found_count": 1,
+            "purged_count": 1,
+            "files": [
+                {"path": "old.go", "chunk_count": 1, "tombstoned_at": "2026-02-01T00:00:00Z"}
+            ],
         }
 
 
@@ -132,3 +157,46 @@ def test_chunk_status_route_updates_tombstones():
     assert len(service.status_calls) == 1
     assert service.status_calls[0]["org_id"] == "org_123"
     assert service.status_calls[0]["request"].chunk_ids == ["chunk-1", "chunk-2"]
+
+
+def test_tombstoned_chunk_list_route_is_admin_only():
+    app = _make_app(DummyIndexingService())
+    app.dependency_overrides[require_admin] = _forbid_admin
+
+    with TestClient(app) as client:
+        response = client.get("/chunks/tombstoned", params={"repo_id": "repo-a"})
+
+    assert response.status_code == 403
+
+
+def test_tombstoned_chunk_list_route_returns_repo_scoped_summaries():
+    service = DummyIndexingService()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+
+    with TestClient(app) as client:
+        response = client.get("/chunks/tombstoned", params={"repo_id": "repo-a"})
+
+    assert response.status_code == 200
+    assert response.json()["found_count"] == 2
+    assert response.json()["files"][0]["path"] == "main.go"
+    assert service.list_calls == [{"org_id": "org_123", "repo_id": "repo-a"}]
+
+
+def test_purge_route_returns_purge_result():
+    service = DummyIndexingService()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+
+    with TestClient(app) as client:
+        response = client.request(
+            "DELETE",
+            "/chunks/purge",
+            json={"repo_id": "repo-a", "older_than_days": 30},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["purged_count"] == 1
+    assert len(service.purge_calls) == 1
+    assert service.purge_calls[0]["org_id"] == "org_123"
+    assert service.purge_calls[0]["request"].older_than_days == 30
