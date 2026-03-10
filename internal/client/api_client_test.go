@@ -109,7 +109,7 @@ func TestClientCreateAdminInvitationSendsJSONBody(t *testing.T) {
 		body = string(decoded)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"pending","organization_id":"org_123"}`))
+		_, _ = w.Write([]byte(`{"id":"orginv_1","invitation_id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"pending","organization_id":"org_123"}`))
 	}))
 	defer server.Close()
 
@@ -149,7 +149,7 @@ func TestClientRevokeAdminInvitationPostsToRevokeEndpoint(t *testing.T) {
 		method = r.Method
 		path = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"revoked","organization_id":"org_123"}`))
+		_, _ = w.Write([]byte(`{"id":"orginv_1","invitation_id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"revoked","organization_id":"org_123"}`))
 	}))
 	defer server.Close()
 
