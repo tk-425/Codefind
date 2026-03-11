@@ -267,6 +267,48 @@ def test_index_route_releases_repo_lock_after_failure():
     assert second.status_code == 200
 
 
+def test_index_route_logs_real_failures_as_failures(monkeypatch):
+    class FailingIndexingService(DummyIndexingService):
+        async def index_chunks(self, *, org_id: str, request):
+            raise RuntimeError("boom")
+
+    service = FailingIndexingService()
+    app = _make_app(service)
+    app.dependency_overrides[require_admin] = _require_admin
+
+    audit_events = []
+    logger_calls = []
+    monkeypatch.setattr(index_routes, "emit_audit_event", lambda **kwargs: audit_events.append(kwargs))
+    monkeypatch.setattr(index_routes.logger, "exception", lambda *args, **kwargs: logger_calls.append(args))
+
+    payload = {
+        "repo_id": "repo-a",
+        "chunks": [
+            {
+                "id": "chunk-1",
+                "content": "func main() {}",
+                "metadata": {
+                    "repo_id": "repo-a",
+                    "path": "main.go",
+                    "language": "go",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content_hash": "hash-1",
+                    "status": "active",
+                    "chunking_method": "window",
+                },
+            }
+        ],
+    }
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post("/index", json=payload)
+
+    assert response.status_code == 500
+    assert logger_calls
+    assert [event["result"] for event in audit_events] == ["start", "failure"]
+
+
 def test_chunk_status_route_updates_tombstones():
     service = DummyIndexingService()
     app = _make_app(service)

@@ -13,4 +13,4 @@ if [[ -f ".env" ]]; then
   set +a
 fi
 
-exec uv run --with uvicorn uvicorn app:app --host "${HOST:-0.0.0.0}" --port "${PORT:-8080}"
+exec uv run --with uvicorn python -m codefind_server.devserver
