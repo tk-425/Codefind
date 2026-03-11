@@ -73,6 +73,10 @@ class StatsResponse(BaseModel):
     repo_id: str | None = None
     repo_count: int
     chunk_count: int
+    active_chunks: int
+    deleted_chunks: int
+    total_chunks: int
+    overhead_percent: float
     repos: list[RepoStatsResponse]
 
 

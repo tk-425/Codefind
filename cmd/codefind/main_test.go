@@ -150,7 +150,13 @@ func TestOrgListCommandCallsBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if !strings.Contains(output, `"organization_id": "org_123"`) {
+	if !strings.Contains(output, "Organizations: 1") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Acme") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "org_123") {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -177,7 +183,89 @@ func TestAdminListCommandCallsMemberAndInvitationEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if !strings.Contains(output, `"members"`) || !strings.Contains(output, `"invitations"`) {
+	if !strings.Contains(output, "Members: 1") || !strings.Contains(output, "Invitations: 1") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "user_member") || !strings.Contains(output, "new@example.com") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestOrgListCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	token := makeTestToken(time.Now().UTC().Add(time.Hour), "org_123")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"organization_id":"org_123","organization_name":"Acme","role":"org:admin"}],"total_count":1}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager(token, nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "org", "list", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"organization_id": "org_123"`) || strings.Contains(output, "Organizations:") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestAdminListCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/admin/members":
+			_, _ = w.Write([]byte(`{"data":[{"user_id":"user_member","role":"org:member"}],"total_count":1}`))
+		case "/admin/invitations":
+			_, _ = w.Write([]byte(`{"data":[{"id":"orginv_1","invitation_id":"orginv_1","email_address":"new@example.com","role":"org:member","status":"pending","organization_id":"org_123"}],"total_count":1}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "admin", "list", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"members"`) || strings.Contains(output, "Members:") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestAuthStatusCommandPrintsHumanReadableOutput(t *testing.T) {
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	output, err := executeCommand(t, "--config", configPath, "auth", "status")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, "Authenticated: YES") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Active Org: org_123") || !strings.Contains(output, "Token Org: org_123") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestAuthStatusCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	output, err := executeCommand(t, "--config", configPath, "auth", "status", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"authenticated": true`) || strings.Contains(output, "Authenticated:") {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -506,13 +594,29 @@ func TestLSPStatusCommandPrintsSupportedLanguages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
+	if !strings.Contains(output, "LSP availability:") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "go: available") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "typescript/javascript: available") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestLSPStatusCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	output, err := executeCommand(t, "lsp", "status", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
 	if !strings.Contains(output, `"supported_count": 7`) {
 		t.Fatalf("output = %q", output)
 	}
 	if !strings.Contains(output, `"language": "go"`) {
 		t.Fatalf("output = %q", output)
 	}
-	if !strings.Contains(output, `"language": "typescript/javascript"`) {
+	if strings.Contains(output, "LSP availability:") {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -535,7 +639,36 @@ func TestListCommandCallsCollectionsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+	if !strings.Contains(output, "Indexed repos: 1") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "repo-a") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestHealthCommandPrintsHumanReadableOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Fatalf("path = %q, want /health", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","ollama_status":"ok","qdrant_status":"ok","timestamp":"2026-03-11T14:35:00Z"}`))
+	}))
+	defer server.Close()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "health")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, "Server: OK") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Ollama: OK") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Qdrant: OK") {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -553,7 +686,7 @@ func TestStatsCommandCallsStatsEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestURI = r.URL.RequestURI()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"repo_count":1,"chunk_count":12,"repos":[{"repo_id":"repo-a","chunk_count":12}]}`))
+		_, _ = w.Write([]byte(`{"repo_id":"repo-a","repo_count":1,"chunk_count":12,"active_chunks":12,"deleted_chunks":3,"total_chunks":15,"overhead_percent":25.0,"repos":[{"repo_id":"repo-a","chunk_count":12}]}`))
 	}))
 	defer server.Close()
 
@@ -569,7 +702,25 @@ func TestStatsCommandCallsStatsEndpoint(t *testing.T) {
 	if requestURI != "/stats?repo_id=repo-a" {
 		t.Fatalf("requestURI = %q", requestURI)
 	}
-	if !strings.Contains(output, `"chunk_count": 12`) {
+	if !strings.Contains(output, "Stats for repo repo-a") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Active Chunks: 12") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Deleted Chunks: 3") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Total Chunks: 15") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Storage Overhead: 25.0%") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Consider running: codefind cleanup --older-than=30") {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "Repos: 1") {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -612,7 +763,7 @@ func TestQueryCommandPostsSearchRequest(t *testing.T) {
 			t.Fatalf("Decode() error = %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"chunk-1","score":0.9,"repo_id":"repo-a"}],"total_count":1,"page":1,"page_size":10,"has_more":false}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"chunk-1","score":0.9,"repo_id":"repo-a","language":"go","path":"main.go","start_line":4,"end_line":7,"snippet":"func main() { println(\"hi\") }"}],"total_count":1,"page":1,"page_size":10,"has_more":false}`))
 	}))
 	defer server.Close()
 
@@ -628,7 +779,16 @@ func TestQueryCommandPostsSearchRequest(t *testing.T) {
 	if requestBody["query_text"] != "main" || requestBody["repo_id"] != "repo-a" || requestBody["language"] != "go" {
 		t.Fatalf("request body = %#v", requestBody)
 	}
-	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+	if !strings.Contains(output, "Results: 1 (page 1, page size 10)") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "1. main.go:4-7") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "Score: 0.900") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "repo repo-a | lang go") {
 		t.Fatalf("output = %q", output)
 	}
 }
@@ -650,6 +810,119 @@ func TestQueryCommandRequiresInitializedProject(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "project is not initialized") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestListCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"repo_id":"repo-a"}],"total_count":1}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "list", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "Indexed repos:") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestHealthCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","ollama_status":"ok","qdrant_status":"ok"}`))
+	}))
+	defer server.Close()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "health", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"status": "ok"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "Server:") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestStatsCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"repo_id":"repo-a","repo_count":1,"chunk_count":12,"active_chunks":12,"deleted_chunks":3,"total_chunks":15,"overhead_percent":25.0,"repos":[{"repo_id":"repo-a","chunk_count":12}]}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	output, err := executeCommand(t, "--config", configPath, "stats", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"chunk_count": 12`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"deleted_chunks": 3`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"overhead_percent": 25`) {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "Stats for") {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestQueryCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"chunk-1","score":0.9,"repo_id":"repo-a","path":"main.go","snippet":"func main() {}"}],"total_count":1,"page":1,"page_size":10,"has_more":false}`))
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	output, err := executeCommand(t, "--config", configPath, "query", "main", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "Results:") {
+		t.Fatalf("output = %q", output)
 	}
 }
 
@@ -731,7 +1004,7 @@ func TestLoadAuthenticatedClientRequiresStoredToken(t *testing.T) {
 	defer restore()
 
 	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
-	_, err := loadAuthenticatedClient(context.Background(), io.Discard, configPath)
+	_, err := loadAuthenticatedClient(context.Background(), io.Discard, configPath, false)
 	if err == nil {
 		t.Fatal("loadAuthenticatedClient() error = nil, want auth guidance")
 	}
@@ -791,7 +1064,7 @@ func TestFakeKeychainProviderCanReturnWrappedError(t *testing.T) {
 	defer restore()
 
 	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
-	_, err := loadAuthenticatedClient(context.Background(), io.Discard, configPath)
+	_, err := loadAuthenticatedClient(context.Background(), io.Discard, configPath, false)
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("error = %v, want wrapped provider error", err)
 	}
@@ -831,7 +1104,10 @@ func TestListCommandRenewsExpiredTokenViaBrowserFlow(t *testing.T) {
 	if !strings.Contains(output, "stored token expired; renewing via browser session...") {
 		t.Fatalf("output = %q", output)
 	}
-	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+	if !strings.Contains(output, "Indexed repos: 1") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, "repo-a") {
 		t.Fatalf("output = %q", output)
 	}
 	token, err := provider.Get("", "")
@@ -847,6 +1123,64 @@ func TestListCommandRenewsExpiredTokenViaBrowserFlow(t *testing.T) {
 	}
 	if claims.OrgID != "org_123" || claims.OrgRole != "org:admin" {
 		t.Fatalf("claims = %+v, want renewed org claims", claims)
+	}
+}
+
+func TestListCommandJSONFlagSuppressesRenewalBanner(t *testing.T) {
+	initialToken := makeTestToken(time.Now().UTC().Add(-time.Minute), "org_old")
+	provider := &fakeKeychainProvider{
+		token: initialToken,
+	}
+	restoreTokenManager := useMutableTokenManager(provider)
+	defer restoreTokenManager()
+
+	restoreLogin := useBrowserLoginRunner(func(_ context.Context, _ io.Writer, _ string) error {
+		return provider.Set("", "", makeTestToken(time.Now().UTC().Add(15*time.Minute), "org_123"))
+	})
+	defer restoreLogin()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"repo_id":"repo-a"}],"total_count":1}`))
+	}))
+	defer server.Close()
+
+	configPath := writeTestConfig(t, server.URL)
+	output, err := executeCommand(t, "--config", configPath, "list", "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if strings.Contains(output, "stored token expired; renewing via browser session...") {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "authentication stored in keychain") {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"repo_id": "repo-a"`) {
+		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestReadCommandsAdvertiseJSONFlagInHelp(t *testing.T) {
+	tests := [][]string{
+		{"health", "--help"},
+		{"list", "--help"},
+		{"stats", "--help"},
+		{"query", "--help"},
+		{"lsp", "status", "--help"},
+		{"org", "list", "--help"},
+		{"admin", "list", "--help"},
+		{"auth", "status", "--help"},
+	}
+
+	for _, args := range tests {
+		output, err := executeCommand(t, args...)
+		if err != nil {
+			t.Fatalf("Execute(%v) error = %v", args, err)
+		}
+		if !strings.Contains(output, "--json") {
+			t.Fatalf("help output for %v = %q", args, output)
+		}
 	}
 }
 
