@@ -1,6 +1,7 @@
 package chunker
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -12,6 +13,11 @@ func TestGenerateChunkIDIsStable(t *testing.T) {
 	id2 := GenerateChunkID("repo1", "main.go", 1, 10, "package main")
 	if id1 != id2 {
 		t.Fatalf("GenerateChunkID() should be stable: %s != %s", id1, id2)
+	}
+
+	uuidPattern := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !uuidPattern.MatchString(id1) {
+		t.Fatalf("GenerateChunkID() = %q, want deterministic UUID", id1)
 	}
 }
 

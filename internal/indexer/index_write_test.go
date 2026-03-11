@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -273,5 +275,77 @@ func TestIndexerIndexSupportsDeterministicParallelChunkBuilds(t *testing.T) {
 	}
 	if !sort.StringsAreSorted(paths) {
 		t.Fatalf("chunk paths should be deterministic and sorted, got %#v", paths)
+	}
+}
+
+func TestIndexerIndexSplitsLargeChunkPayloadsIntoMultipleSendBatches(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv(indexSendBatchSizeEnvVar, "8")
+
+	repoDir := t.TempDir()
+	var content strings.Builder
+	content.WriteString("package main\n\n")
+	for i := range 5000 {
+		content.WriteString("func f")
+		content.WriteString(strconv.Itoa(i))
+		content.WriteString("() {}\n\n")
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte(content.String()), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	indexer, err := New(repoDir, &Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		RepoID:        "repo-a",
+		OrgID:         "org_123",
+		Files:         map[string]ManifestFile{},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	store := &fakeChunkStore{}
+	response, err := indexer.Index(context.Background(), RunOptions{
+		RepoID:      "repo-a",
+		OrgID:       "org_123",
+		Force:       true,
+		Window:      false,
+		Concurrency: 1,
+	}, store)
+	if err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+	if response.IndexedCount == 0 {
+		t.Fatalf("Index() = %#v, want indexed chunks", response)
+	}
+	if len(store.indexRequests) < 2 {
+		t.Fatalf("Index requests = %d, want multiple batches", len(store.indexRequests))
+	}
+	batchSize, err := indexSendBatchSizeFromEnv()
+	if err != nil {
+		t.Fatalf("indexSendBatchSizeFromEnv() error = %v", err)
+	}
+	totalChunks := 0
+	for _, request := range store.indexRequests {
+		if len(request.Chunks) > batchSize {
+			t.Fatalf("batch size = %d, want <= %d", len(request.Chunks), batchSize)
+		}
+		totalChunks += len(request.Chunks)
+	}
+	if totalChunks != response.IndexedCount {
+		t.Fatalf("total sent chunks = %d, response indexed_count = %d", totalChunks, response.IndexedCount)
+	}
+}
+
+func TestIndexSendBatchSizeFromEnvRejectsInvalidValue(t *testing.T) {
+	t.Setenv(indexSendBatchSizeEnvVar, "invalid")
+
+	_, err := indexSendBatchSizeFromEnv()
+	if err == nil {
+		t.Fatal("indexSendBatchSizeFromEnv() error = nil, want validation failure")
+	}
+	if !strings.Contains(err.Error(), indexSendBatchSizeEnvVar) {
+		t.Fatalf("error = %v", err)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tk-425/Codefind/pkg/api"
 )
@@ -256,6 +257,51 @@ func TestClientIndexPostsChunksAndAcceptsOK(t *testing.T) {
 	if !strings.Contains(body, `"repo_id":"repo-a"`) || !strings.Contains(body, `"chunking_method":"window"`) {
 		t.Fatalf("body = %q", body)
 	}
+	if response.IndexedCount != 1 || !response.Accepted {
+		t.Fatalf("Index() = %#v", response)
+	}
+}
+
+func TestClientIndexUsesLongerRequestTimeoutThanDefaultClient(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","repo_id":"repo-a","indexed_count":1,"accepted":true}`))
+	}))
+	defer server.Close()
+
+	client, err := NewWithHTTPClient(
+		server.URL,
+		fakeTokenLoader{token: "token-123"},
+		&http.Client{Timeout: 10 * time.Millisecond},
+	)
+	if err != nil {
+		t.Fatalf("NewWithHTTPClient() error = %v", err)
+	}
+
+	response, err := client.Index(context.Background(), api.IndexRequest{
+		RepoID: "repo-a",
+		Chunks: []api.IndexChunk{
+			{
+				ID:      "chunk-1",
+				Content: "func main() {}",
+				Metadata: api.ChunkMetadata{
+					RepoID:      "repo-a",
+					Path:        "main.go",
+					StartLine:   1,
+					EndLine:     1,
+					ContentHash: "hash-1",
+					Status:      "active",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
 	if response.IndexedCount != 1 || !response.Accepted {
 		t.Fatalf("Index() = %#v", response)
 	}

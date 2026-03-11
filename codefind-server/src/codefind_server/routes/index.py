@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..adapters.base import VectorStore
@@ -17,6 +19,7 @@ from ..services import IndexJobLockManager, IndexingService, OllamaService
 
 
 router = APIRouter(tags=["index"])
+logger = logging.getLogger("codefind")
 
 
 def _response_value(payload: object, key: str) -> object:
@@ -38,10 +41,16 @@ def get_index_lock_manager(request: Request) -> IndexJobLockManager:
 
 
 def get_indexing_service(
+    request: Request,
     vector_store: VectorStore = Depends(get_vector_store),
     ollama: OllamaService = Depends(get_ollama_service),
 ) -> IndexingService:
-    return IndexingService(vector_store=vector_store, ollama=ollama)
+    embed_batch_size = request.app.state.settings.ollama_embed_batch_size
+    return IndexingService(
+        vector_store=vector_store,
+        ollama=ollama,
+        embed_batch_size=embed_batch_size,
+    )
 
 
 @router.post("/index", response_model=IndexResponse, status_code=status.HTTP_200_OK)
@@ -52,6 +61,12 @@ async def index_repo(
     lock_manager: IndexJobLockManager = Depends(get_index_lock_manager),
 ) -> IndexResponse:
     lock_key = f"{context.org_id}:{request.repo_id}"
+    logger.info(
+        "[INDEX] start repo=%s org=%s chunks=%d",
+        request.repo_id,
+        context.org_id,
+        len(request.chunks),
+    )
     acquired = await lock_manager.acquire(lock_key)
     if not acquired:
         raise HTTPException(
@@ -68,6 +83,7 @@ async def index_repo(
     try:
         response = await indexing_service.index_chunks(org_id=context.org_id, request=request)
     except Exception as error:
+        logger.exception("[INDEX] failure repo=%s", request.repo_id)
         emit_audit_event(
             event_type="index.run",
             result="failure",
@@ -76,6 +92,12 @@ async def index_repo(
         )
         raise
     else:
+        logger.info(
+            "[INDEX] success repo=%s indexed=%s accepted=%s",
+            request.repo_id,
+            _response_value(response, "indexed_count"),
+            _response_value(response, "accepted"),
+        )
         emit_audit_event(
             event_type="index.run",
             result="success",

@@ -1,7 +1,6 @@
 package chunker
 
 import (
-	"crypto/md5"
 	"crypto/sha256"
 	"fmt"
 	"strings"
@@ -75,14 +74,24 @@ func countLinesInText(text string) int {
 }
 
 func hashContent(content string) string {
-	h := md5.Sum([]byte(content))
+	h := sha256.Sum256([]byte(content))
 	return fmt.Sprintf("%x", h)
 }
 
 func GenerateChunkID(repoID, filePath string, startLine, endLine int, content string) string {
 	input := fmt.Sprintf("%s:%s:%d-%d:%s", repoID, filePath, startLine, endLine, content)
 	hash := sha256.Sum256([]byte(input))
-	return fmt.Sprintf("%x", hash[:8])
+	uuidBytes := hash[:16]
+	uuidBytes[6] = (uuidBytes[6] & 0x0f) | 0x50
+	uuidBytes[8] = (uuidBytes[8] & 0x3f) | 0x80
+	return fmt.Sprintf(
+		"%08x-%04x-%04x-%04x-%012x",
+		uuidBytes[0:4],
+		uuidBytes[4:6],
+		uuidBytes[6:8],
+		uuidBytes[8:10],
+		uuidBytes[10:16],
+	)
 }
 
 func GenerateContentHash(content string) string {
