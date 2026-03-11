@@ -16,7 +16,10 @@ import (
 	"github.com/tk-425/Codefind/pkg/api"
 )
 
-const defaultTimeout = 5 * time.Second
+const (
+	defaultTimeout      = 5 * time.Second
+	indexRequestTimeout = 5 * time.Minute
+)
 
 type TokenLoader interface {
 	LoadToken() (string, error)
@@ -94,7 +97,15 @@ func (c *Client) Tokenize(ctx context.Context, request api.TokenizeRequest) (api
 
 func (c *Client) Index(ctx context.Context, request api.IndexRequest) (api.IndexResponse, error) {
 	var payload api.IndexResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/index", request, http.StatusOK, &payload); err != nil {
+	if err := c.doJSONWithTimeout(
+		ctx,
+		http.MethodPost,
+		"/index",
+		request,
+		http.StatusOK,
+		&payload,
+		indexRequestTimeout,
+	); err != nil {
 		return api.IndexResponse{}, err
 	}
 	return payload, nil
@@ -220,6 +231,18 @@ func (c *Client) doJSON(
 	expectedStatus int,
 	out any,
 ) error {
+	return c.doJSONWithTimeout(ctx, method, requestPath, requestBody, expectedStatus, out, 0)
+}
+
+func (c *Client) doJSONWithTimeout(
+	ctx context.Context,
+	method string,
+	requestPath string,
+	requestBody any,
+	expectedStatus int,
+	out any,
+	timeout time.Duration,
+) error {
 	var body io.Reader
 	if requestBody != nil {
 		encoded, err := json.Marshal(requestBody)
@@ -237,7 +260,14 @@ func (c *Client) doJSON(
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := c.httpClient.Do(req)
+	httpClient := c.httpClient
+	if timeout > 0 && (httpClient.Timeout == 0 || httpClient.Timeout < timeout) {
+		clientCopy := *httpClient
+		clientCopy.Timeout = timeout
+		httpClient = &clientCopy
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("request %s %s: %w", method, requestPath, err)
 	}

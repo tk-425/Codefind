@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from collections import OrderedDict
 
@@ -14,52 +15,98 @@ from ..models.responses import (
     TombstonedChunkSummaryResponse,
 )
 from .collection_scope import collection_name_for
-from .ollama import OllamaService
+from .ollama import OllamaError, OllamaService
+
+
+logger = logging.getLogger("codefind")
 
 
 class IndexingService:
-    def __init__(self, *, vector_store: VectorStore, ollama: OllamaService) -> None:
+    def __init__(
+        self,
+        *,
+        vector_store: VectorStore,
+        ollama: OllamaService,
+        embed_batch_size: int = 4,
+    ) -> None:
         self._vector_store = vector_store
         self._ollama = ollama
+        self._embed_batch_size = embed_batch_size
 
     async def index_chunks(self, *, org_id: str, request: IndexRequest) -> IndexResponse:
         collection = collection_name_for(org_id, request.repo_id)
-        points: list[VectorPoint] = []
+        ensured_collection = False
+        indexed_count = 0
+        chunk_batches = list(_chunk_batches(request.chunks, self._embed_batch_size))
 
-        for chunk in request.chunks:
-            embedding = await self._ollama.embed(chunk.content)
-            await self._vector_store.ensure_collection(collection, len(embedding.embedding))
-            payload = {
-                "repo_id": request.repo_id,
-                "path": chunk.metadata.path,
-                "language": chunk.metadata.language,
-                "start_line": chunk.metadata.start_line,
-                "end_line": chunk.metadata.end_line,
-                "content_hash": chunk.metadata.content_hash,
-                "status": chunk.metadata.status,
-                "symbol_name": chunk.metadata.symbol_name,
-                "symbol_kind": chunk.metadata.symbol_kind,
-                "parent_name": chunk.metadata.parent_name,
-                "indexed_at": chunk.metadata.indexed_at
-                or datetime.now(UTC).isoformat(),
-                "chunking_method": chunk.metadata.chunking_method,
-                "fallback_reason": chunk.metadata.fallback_reason,
-                "snippet": chunk.content,
-                "content": chunk.content,
-            }
-            points.append(
-                VectorPoint(
-                    id=chunk.id,
-                    vector=embedding.embedding,
-                    payload={k: v for k, v in payload.items() if v is not None and v != ""},
+        logger.info(
+            "[INDEX] plan repo=%s org=%s chunks=%d embed_batches=%d embed_batch_size=%d",
+            request.repo_id,
+            org_id,
+            len(request.chunks),
+            len(chunk_batches),
+            self._embed_batch_size,
+        )
+
+        for batch_index, chunk_batch in enumerate(chunk_batches, start=1):
+            logger.info(
+                "[INDEX][EMBED] repo=%s batch=%d/%d size=%d",
+                request.repo_id,
+                batch_index,
+                len(chunk_batches),
+                len(chunk_batch),
+            )
+            embeddings = await self._ollama.embed_many([chunk.content for chunk in chunk_batch])
+            if len(embeddings) != len(chunk_batch):
+                raise OllamaError("ollama embed response count did not match request count")
+            if embeddings and not ensured_collection:
+                await self._vector_store.ensure_collection(collection, len(embeddings[0].embedding))
+                ensured_collection = True
+
+            points: list[VectorPoint] = []
+            for chunk, embedding in zip(chunk_batch, embeddings, strict=True):
+                payload = {
+                    "repo_id": request.repo_id,
+                    "path": chunk.metadata.path,
+                    "language": chunk.metadata.language,
+                    "start_line": chunk.metadata.start_line,
+                    "end_line": chunk.metadata.end_line,
+                    "content_hash": chunk.metadata.content_hash,
+                    "status": chunk.metadata.status,
+                    "symbol_name": chunk.metadata.symbol_name,
+                    "symbol_kind": chunk.metadata.symbol_kind,
+                    "parent_name": chunk.metadata.parent_name,
+                    "indexed_at": chunk.metadata.indexed_at
+                    or datetime.now(UTC).isoformat(),
+                    "chunking_method": chunk.metadata.chunking_method,
+                    "fallback_reason": chunk.metadata.fallback_reason,
+                    "snippet": chunk.content,
+                    "content": chunk.content,
+                }
+                points.append(
+                    VectorPoint(
+                        id=chunk.id,
+                        vector=embedding.embedding,
+                        payload={k: v for k, v in payload.items() if v is not None and v != ""},
+                    )
                 )
+
+            await self._vector_store.upsert(collection, points)
+            indexed_count += len(points)
+            logger.info(
+                "[INDEX][UPSERT] repo=%s batch=%d/%d points=%d indexed=%d",
+                request.repo_id,
+                batch_index,
+                len(chunk_batches),
+                len(points),
+                indexed_count,
             )
 
-        await self._vector_store.upsert(collection, points)
+        logger.info("[INDEX] complete repo=%s indexed=%d", request.repo_id, indexed_count)
         return IndexResponse(
             status="ok",
             repo_id=request.repo_id,
-            indexed_count=len(points),
+            indexed_count=indexed_count,
             accepted=True,
         )
 
@@ -180,3 +227,8 @@ class IndexingService:
             )
             for path, (chunk_count, tombstoned_at) in by_path.items()
         ]
+
+
+def _chunk_batches(chunks, batch_size: int):
+    for start in range(0, len(chunks), batch_size):
+        yield chunks[start : start + batch_size]

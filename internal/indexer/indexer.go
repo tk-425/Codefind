@@ -2,10 +2,12 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"strconv"
 	"slices"
 	"sort"
 	"strings"
@@ -31,9 +33,15 @@ type RunOptions struct {
 	Window      bool
 	RetryLSP    bool
 	Concurrency int
+	Progress    func(string)
 }
 
 var warmLanguages = lsp.WarmLanguages
+
+const (
+	defaultIndexSendBatchSize = 8
+	indexSendBatchSizeEnvVar  = "CODEFIND_INDEX_SEND_BATCH_SIZE"
+)
 
 func New(repoPath string, manifest *Manifest) (*Indexer, error) {
 	if err := validateRepoPath(repoPath); err != nil {
@@ -101,6 +109,7 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 	}
 	i.manifest.RepoID = options.RepoID
 	i.manifest.OrgID = options.OrgID
+	reportProgress(options.Progress, "Resolving repository state...")
 
 	currentCommit := ""
 	if IsGitRepository(i.repoPath) {
@@ -113,6 +122,7 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 	var retryCandidates []string
 
 	if options.Force || i.manifest.LastCommit == "" {
+		reportProgress(options.Progress, "Discovering files...")
 		discovery, err := i.Discover()
 		if err != nil {
 			return api.IndexResponse{}, err
@@ -121,6 +131,7 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 			added = append(added, file.Path)
 		}
 	} else {
+		reportProgress(options.Progress, "Detecting file changes...")
 		changes, err := i.DetectChanges()
 		if err != nil {
 			return api.IndexResponse{}, err
@@ -130,6 +141,7 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 		deleted = append(deleted, changes.Deleted...)
 		currentCommit = changes.CurrentCommit
 		if options.RetryLSP {
+			reportProgress(options.Progress, "Collecting retry candidates for degraded LSP chunks...")
 			retryCandidates, err = i.retryLSPCandidates(append(append([]string{}, added...), modified...), deleted)
 			if err != nil {
 				return api.IndexResponse{}, err
@@ -138,11 +150,13 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 	}
 
 	if !options.Window && len(added)+len(modified)+len(retryCandidates) > 0 {
+		reportProgress(options.Progress, "Warming language servers...")
 		_, _ = i.WarmLSPs()
 	}
 
 	tombstonedIDs := i.collectChunkIDs(append(append(append([]string{}, modified...), deleted...), retryCandidates...))
 	if len(tombstonedIDs) > 0 {
+		reportProgress(options.Progress, fmt.Sprintf("Marking %d stale chunks as tombstoned...", len(tombstonedIDs)))
 		if _, err := store.UpdateChunkStatus(ctx, api.ChunkStatusUpdateRequest{
 			RepoID:   options.RepoID,
 			ChunkIDs: tombstonedIDs,
@@ -154,6 +168,7 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 
 	filesToIndex := append(append(append([]string{}, added...), modified...), retryCandidates...)
 	filesToIndex = uniquePaths(filesToIndex)
+	reportProgress(options.Progress, fmt.Sprintf("Building chunks for %d files...", len(filesToIndex)))
 	indexChunks, manifestFiles, err := i.buildChunks(filesToIndex, options, currentCommit)
 	if err != nil {
 		return api.IndexResponse{}, err
@@ -161,10 +176,7 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 
 	var response api.IndexResponse
 	if len(indexChunks) > 0 {
-		response, err = store.Index(ctx, api.IndexRequest{
-			RepoID: options.RepoID,
-			Chunks: indexChunks,
-		})
+		response, err = sendIndexChunks(ctx, store, options.RepoID, indexChunks, options.Progress)
 		if err != nil {
 			return api.IndexResponse{}, err
 		}
@@ -183,11 +195,87 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 	}
 	maps.Copy(i.manifest.Files, manifestFiles)
 	i.manifest.LastCommit = currentCommit
+	reportProgress(options.Progress, "Saving manifest...")
 	if err := SaveManifest(i.manifest); err != nil {
 		return api.IndexResponse{}, err
 	}
 
+	reportProgress(options.Progress, "Index complete.")
 	return response, nil
+}
+
+func reportProgress(progress func(string), message string) {
+	if progress != nil && strings.TrimSpace(message) != "" {
+		progress(message)
+	}
+}
+
+func chunkingMethodTag(method string) string {
+	if method == "symbol" {
+		return "[LSP]"
+	}
+	return "[WINDOW]"
+}
+
+func sendIndexChunks(
+	ctx context.Context,
+	store ChunkStore,
+	repoID string,
+	indexChunks []api.IndexChunk,
+	progress func(string),
+) (api.IndexResponse, error) {
+	batchSize, err := indexSendBatchSizeFromEnv()
+	if err != nil {
+		return api.IndexResponse{}, err
+	}
+	batches := splitIndexChunkBatches(indexChunks, batchSize)
+	totalIndexed := 0
+	for idx, batch := range batches {
+		reportProgress(progress, fmt.Sprintf("[SEND] %d/%d send: %d chunks", idx+1, len(batches), len(batch)))
+		response, err := store.Index(ctx, api.IndexRequest{
+			RepoID: repoID,
+			Chunks: batch,
+		})
+		if err != nil {
+			return api.IndexResponse{}, err
+		}
+		totalIndexed += response.IndexedCount
+	}
+
+	return api.IndexResponse{
+		Status:       "ok",
+		RepoID:       repoID,
+		IndexedCount: totalIndexed,
+		Accepted:     true,
+	}, nil
+}
+
+func splitIndexChunkBatches(chunks []api.IndexChunk, batchSize int) [][]api.IndexChunk {
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	batches := make([][]api.IndexChunk, 0, (len(chunks)+batchSize-1)/batchSize)
+	for start := 0; start < len(chunks); start += batchSize {
+		end := min(start+batchSize, len(chunks))
+		batches = append(batches, chunks[start:end])
+	}
+	return batches
+}
+
+func indexSendBatchSizeFromEnv() (int, error) {
+	raw := strings.TrimSpace(os.Getenv(indexSendBatchSizeEnvVar))
+	if raw == "" {
+		return defaultIndexSendBatchSize, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a positive integer", indexSendBatchSizeEnvVar)
+	}
+	if value <= 0 {
+		return 0, errors.New(indexSendBatchSizeEnvVar + " must be a positive integer")
+	}
+	return value, nil
 }
 
 func (i *Indexer) retryLSPCandidates(changedPaths, deletedPaths []string) ([]string, error) {
@@ -252,6 +340,7 @@ func (i *Indexer) buildChunks(files []string, options RunOptions, currentCommit 
 		path         string
 		chunks       []api.IndexChunk
 		manifestFile ManifestFile
+		method       string
 	}
 
 	results := make([]fileBuildResult, 0, len(files))
@@ -279,6 +368,7 @@ func (i *Indexer) buildChunks(files []string, options RunOptions, currentCommit 
 				path:         relPath,
 				chunks:       fileChunks,
 				manifestFile: manifestFile,
+				method:       manifestFile.LastChunkingMethod,
 			}
 		})
 	}
@@ -302,9 +392,13 @@ func (i *Indexer) buildChunks(files []string, options RunOptions, currentCommit 
 
 	chunks := make([]api.IndexChunk, 0)
 	manifestFiles := make(map[string]ManifestFile, len(results))
-	for _, result := range results {
+	for idx, result := range results {
 		chunks = append(chunks, result.chunks...)
 		manifestFiles[result.path] = result.manifestFile
+		reportProgress(
+			options.Progress,
+			fmt.Sprintf("%s [%d/%d] %s: %d chunks", chunkingMethodTag(result.method), idx+1, len(results), result.path, len(result.chunks)),
+		)
 	}
 
 	return chunks, manifestFiles, nil
@@ -314,13 +408,17 @@ func (i *Indexer) buildChunksSerial(files []string, options RunOptions, currentC
 	chunks := make([]api.IndexChunk, 0)
 	manifestFiles := make(map[string]ManifestFile, len(files))
 
-	for _, relPath := range files {
+	for idx, relPath := range files {
 		fileChunks, manifestFile, err := i.buildChunkFile(relPath, options, currentCommit)
 		if err != nil {
 			return nil, nil, err
 		}
 		chunks = append(chunks, fileChunks...)
 		manifestFiles[relPath] = manifestFile
+		reportProgress(
+			options.Progress,
+			fmt.Sprintf("%s [%d/%d] %s: %d chunks", chunkingMethodTag(manifestFile.LastChunkingMethod), idx+1, len(files), relPath, len(fileChunks)),
+		)
 	}
 
 	return chunks, manifestFiles, nil

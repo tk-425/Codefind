@@ -26,6 +26,7 @@ class Settings:
     clerk_secret_key: str
     ollama_embed_model: str = "nomic-embed-text"
     tokenizer_model: str = "bert-base-uncased"
+    ollama_embed_batch_size: int = 4
     audit_log_path: str | None = None
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.0
@@ -58,6 +59,9 @@ class Settings:
             ollama_url=os.getenv("OLLAMA_URL", ""),
             ollama_embed_model=os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
             tokenizer_model=os.getenv("TOKENIZER_MODEL", "bert-base-uncased"),
+            ollama_embed_batch_size=int(
+                os.getenv("OLLAMA_EMBED_BATCH_SIZE", "4")
+            ),
             clerk_iss=os.getenv("CLERK_ISS", ""),
             clerk_azp=os.getenv("CLERK_AZP", ""),
             clerk_jwks_url=os.getenv("CLERK_JWKS_URL", ""),
@@ -112,6 +116,7 @@ class Settings:
             raise SettingsError("SENTRY_TRACES_SAMPLE_RATE must be between 0.0 and 1.0.")
         for name, value in (
             ("MAX_REQUEST_BODY_BYTES", self.max_request_body_bytes),
+            ("OLLAMA_EMBED_BATCH_SIZE", self.ollama_embed_batch_size),
             ("RATE_LIMIT_WINDOW_SECONDS", self.rate_limit_window_seconds),
             ("RATE_LIMIT_AUTH_PER_WINDOW", self.rate_limit_auth_per_window),
             ("RATE_LIMIT_ADMIN_PER_WINDOW", self.rate_limit_admin_per_window),

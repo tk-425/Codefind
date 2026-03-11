@@ -67,6 +67,39 @@ def test_settings_reject_non_positive_limits():
         settings.validate_required()
 
 
+def test_settings_reject_non_positive_ollama_embed_batch_size():
+    settings = Settings(
+        environment="test",
+        web_app_url="http://localhost:5173",
+        vector_store="qdrant",
+        qdrant_url="http://localhost:6333",
+        ollama_url="http://localhost:11434",
+        clerk_iss="https://clerk.example.com",
+        clerk_azp="http://localhost:3000",
+        clerk_jwks_url="https://clerk.example.com/jwks",
+        clerk_secret_key="secret",
+        ollama_embed_batch_size=0,
+    )
+
+    with pytest.raises(SettingsError, match="OLLAMA_EMBED_BATCH_SIZE"):
+        settings.validate_required()
+
+
+def test_get_settings_reads_ollama_embed_batch_size(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("VECTOR_STORE", "qdrant")
+    monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("OLLAMA_EMBED_BATCH_SIZE", "48")
+    monkeypatch.setenv("CLERK_ISS", "https://clerk.example.com")
+    monkeypatch.setenv("CLERK_AZP", "http://localhost:3000")
+    monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.com/jwks")
+    monkeypatch.setenv("CLERK_SECRET_KEY", "secret")
+
+    settings = get_settings()
+
+    assert settings.ollama_embed_batch_size == 48
+
+
 def test_settings_reject_invalid_web_app_url():
     settings = Settings(
         environment="test",

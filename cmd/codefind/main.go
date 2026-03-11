@@ -568,6 +568,7 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 		Use:   "run",
 		Short: "Index a repo for the current organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			startedAt := time.Now()
 			if strings.TrimSpace(repoPath) == "" {
 				repoPath = "."
 			}
@@ -598,6 +599,12 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			modeLabel := "hybrid (LSP when available)"
+			if window {
+				modeLabel = "window-only"
+			}
+			reporter := newIndexRunReporter(cmd.OutOrStdout())
+			reporter.Start(resolvedRepoID, resolvedRepoPath, modeLabel, concurrency)
 			idx, err := indexer.New(resolvedRepoPath, manifest)
 			if err != nil {
 				return err
@@ -610,10 +617,12 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 				Window:      window,
 				RetryLSP:    retryLSP,
 				Concurrency: concurrency,
+				Progress:    reporter.Progress,
 			}, indexer.NewClientStore(apiClient))
 			if err != nil {
 				return err
 			}
+			reporter.Complete(time.Since(startedAt))
 			return writeJSON(cmd.OutOrStdout(), response)
 		},
 	}
@@ -1072,4 +1081,30 @@ func writeJSON(stdout io.Writer, value any) error {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(value)
+}
+
+type indexRunReporter struct {
+	stdout io.Writer
+}
+
+const indexRunBanner = "┏━╸┏━┓╺┳┓┏━╸   ┏━╸╻┏┓╻╺┳┓\n┃  ┃ ┃ ┃┃┣╸ ╺━╸┣╸ ┃┃┗┫ ┃┃\n┗━╸┗━┛╺┻┛┗━╸   ╹  ╹╹ ╹╺┻┛"
+
+func newIndexRunReporter(stdout io.Writer) *indexRunReporter {
+	return &indexRunReporter{stdout: stdout}
+}
+
+func (r *indexRunReporter) Start(repoID, repoPath, mode string, concurrency int) {
+	fmt.Fprintf(r.stdout, "%s\n\n", indexRunBanner)
+	fmt.Fprintf(r.stdout, "Repo ID: %s\n", repoID)
+	fmt.Fprintf(r.stdout, "Repo Path: %s\n", repoPath)
+	fmt.Fprintf(r.stdout, "Chunking Mode: %s\n", mode)
+	fmt.Fprintf(r.stdout, "Concurrency: %d\n", concurrency)
+}
+
+func (r *indexRunReporter) Progress(message string) {
+	fmt.Fprintf(r.stdout, "• %s\n", message)
+}
+
+func (r *indexRunReporter) Complete(duration time.Duration) {
+	fmt.Fprintf(r.stdout, "Total Time: %.1fs\n", duration.Seconds())
 }

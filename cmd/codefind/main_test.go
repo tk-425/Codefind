@@ -331,6 +331,16 @@ func TestIndexCommandPostsIndexedChunks(t *testing.T) {
 	if !sawChunkingMethod {
 		t.Fatalf("expected chunking_method=window in /index payload")
 	}
+	if !strings.Contains(output, "┏━╸┏━┓╺┳┓┏━╸") ||
+		!strings.Contains(output, "Chunking Mode: window-only") ||
+		!strings.Contains(output, "• Discovering files...") ||
+		!strings.Contains(output, "• Building chunks for 1 files...") ||
+		!strings.Contains(output, "• [WINDOW] [1/1] main.go: 1 chunks") ||
+		!strings.Contains(output, "• [SEND] 1/1 send: 1 chunks") ||
+		!strings.Contains(output, "• Index complete.") ||
+		!strings.Contains(output, "Total Time: ") {
+		t.Fatalf("output = %q", output)
+	}
 	if !strings.Contains(output, `"indexed_count": 1`) {
 		t.Fatalf("output = %q", output)
 	}
