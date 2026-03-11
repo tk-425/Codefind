@@ -18,6 +18,7 @@ import (
 
 	"github.com/tk-425/Codefind/internal/authflow"
 	"github.com/tk-425/Codefind/internal/config"
+	"github.com/tk-425/Codefind/internal/indexer"
 	"github.com/tk-425/Codefind/internal/keychain"
 )
 
@@ -73,9 +74,13 @@ func useBrowserLoginRunner(
 }
 
 func makeTestToken(expiry time.Time, orgID string) string {
+	return makeTestTokenWithRole(expiry, orgID, "org:admin")
+}
+
+func makeTestTokenWithRole(expiry time.Time, orgID, orgRole string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
 	payload := base64.RawURLEncoding.EncodeToString([]byte(
-		`{"org_id":"` + orgID + `","org_role":"org:admin","exp":` + fmt.Sprint(expiry.Unix()) + `}`,
+		`{"org_id":"` + orgID + `","org_role":"` + orgRole + `","exp":` + fmt.Sprint(expiry.Unix()) + `}`,
 	))
 	return header + "." + payload + ".signature"
 }
@@ -113,12 +118,23 @@ func executeCommand(t *testing.T, args ...string) (string, error) {
 	return output.String(), err
 }
 
+func initTestProject(t *testing.T, configPath, repoDir string, extraArgs ...string) {
+	t.Helper()
+	t.Chdir(repoDir)
+	args := []string{"--config", configPath, "init"}
+	args = append(args, extraArgs...)
+	if _, err := executeCommand(t, args...); err != nil {
+		t.Fatalf("init Execute() error = %v", err)
+	}
+}
+
 func TestOrgListCommandCallsBackend(t *testing.T) {
+	token := makeTestToken(time.Now().UTC().Add(time.Hour), "org_123")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/orgs" {
 			t.Fatalf("path = %q, want /orgs", r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Bearer token-123" {
+		if r.Header.Get("Authorization") != "Bearer "+token {
 			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -126,7 +142,7 @@ func TestOrgListCommandCallsBackend(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(token, nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, server.URL)
@@ -153,7 +169,7 @@ func TestAdminListCommandCallsMemberAndInvitationEndpoints(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, server.URL)
@@ -181,7 +197,7 @@ func TestAdminInviteCommandPostsJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, server.URL)
@@ -211,7 +227,7 @@ func TestAdminRevokeInviteCommandPostsToRevokeEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, server.URL)
@@ -241,7 +257,7 @@ func TestAdminRemoveCommandCallsDelete(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, server.URL)
@@ -300,18 +316,12 @@ func TestIndexCommandPostsIndexedChunks(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
-	output, err := executeCommand(
-		t,
-		"--config", configPath,
-		"index", "run",
-		"--repo-id", "repo-a",
-		"--repo-path", repoDir,
-		"--window",
-	)
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	output, err := executeCommand(t, "--config", configPath, "index", "run", "--window")
 	if err != nil {
 		t.Fatalf("Execute() error = %v\noutput=%s", err, output)
 	}
@@ -326,7 +336,55 @@ func TestIndexCommandPostsIndexedChunks(t *testing.T) {
 	}
 }
 
+func TestIndexRunRequiresInit(t *testing.T) {
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	_, err := executeCommand(t, "--config", configPath, "index", "run", "--window")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want init guidance")
+	}
+	if !strings.Contains(err.Error(), "project is not initialized") || !strings.Contains(err.Error(), "codefind init") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestIndexRunRequiresAdminRole(t *testing.T) {
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestTokenWithRole(time.Now().UTC().Add(time.Hour), "org_123", "org:member"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	_, err := executeCommand(t, "--config", configPath, "index", "run", "--window")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want admin-role guidance")
+	}
+	if !strings.Contains(err.Error(), "org:admin role required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestCleanupListCommandCallsTombstonedEndpoint(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
 	var method string
 	var path string
 	var rawQuery string
@@ -339,11 +397,12 @@ func TestCleanupListCommandCallsTombstonedEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
-	configPath := writeTestConfig(t, server.URL)
-	output, err := executeCommand(t, "--config", configPath, "cleanup", "--repo-id", "repo-a", "--list")
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	output, err := executeCommand(t, "--config", configPath, "cleanup", "--list")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -356,6 +415,14 @@ func TestCleanupListCommandCallsTombstonedEndpoint(t *testing.T) {
 }
 
 func TestCleanupPurgeCommandCallsDeleteEndpoint(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
 	var method string
 	var path string
 	var requestBody map[string]any
@@ -370,11 +437,12 @@ func TestCleanupPurgeCommandCallsDeleteEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
-	configPath := writeTestConfig(t, server.URL)
-	output, err := executeCommand(t, "--config", configPath, "cleanup", "--repo-id", "repo-a", "--older-than", "30")
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	output, err := executeCommand(t, "--config", configPath, "cleanup", "--older-than", "30")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -386,6 +454,40 @@ func TestCleanupPurgeCommandCallsDeleteEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(output, `"purged_count": 2`) {
 		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestCleanupCommandRequiresAdminRole(t *testing.T) {
+	restore := useFakeTokenManager(makeTestTokenWithRole(time.Now().UTC().Add(time.Hour), "org_123", "org:member"), nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
+	_, err := executeCommand(t, "--config", configPath, "cleanup", "--repo-id", "repo-a", "--list")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want admin-role guidance")
+	}
+	if !strings.Contains(err.Error(), "org:admin role required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCleanupCommandRequiresInitializedProject(t *testing.T) {
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	_, err := executeCommand(t, "--config", configPath, "cleanup", "--list")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want init guidance")
+	}
+	if !strings.Contains(err.Error(), "project is not initialized") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -415,7 +517,7 @@ func TestListCommandCallsCollectionsEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, server.URL)
@@ -429,6 +531,14 @@ func TestListCommandCallsCollectionsEndpoint(t *testing.T) {
 }
 
 func TestStatsCommandCallsStatsEndpoint(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
 	var requestURI string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestURI = r.URL.RequestURI()
@@ -437,11 +547,12 @@ func TestStatsCommandCallsStatsEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
-	configPath := writeTestConfig(t, server.URL)
-	output, err := executeCommand(t, "--config", configPath, "stats", "--repo-id", "repo-a")
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	output, err := executeCommand(t, "--config", configPath, "stats")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -453,7 +564,35 @@ func TestStatsCommandCallsStatsEndpoint(t *testing.T) {
 	}
 }
 
+func TestStatsCommandRequiresInitializedProject(t *testing.T) {
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	_, err := executeCommand(t, "--config", configPath, "stats")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want init guidance")
+	}
+	if !strings.Contains(err.Error(), "project is not initialized") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestQueryCommandPostsSearchRequest(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
 	var requestBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/query" || r.Method != http.MethodPost {
@@ -467,11 +606,12 @@ func TestQueryCommandPostsSearchRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
-	configPath := writeTestConfig(t, server.URL)
-	output, err := executeCommand(t, "--config", configPath, "query", "main", "--repo-id", "repo-a", "--lang", "go")
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	output, err := executeCommand(t, "--config", configPath, "query", "main", "--lang", "go")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -483,7 +623,35 @@ func TestQueryCommandPostsSearchRequest(t *testing.T) {
 	}
 }
 
+func TestQueryCommandRequiresInitializedProject(t *testing.T) {
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	_, err := executeCommand(t, "--config", configPath, "query", "main")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want init guidance")
+	}
+	if !strings.Contains(err.Error(), "project is not initialized") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestTokenizeCommandPostsText(t *testing.T) {
+	repoDir := t.TempDir()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
 	var requestBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/tokenize" || r.Method != http.MethodPost {
@@ -497,10 +665,11 @@ func TestTokenizeCommandPostsText(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
-	configPath := writeTestConfig(t, server.URL)
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	initTestProject(t, configPath, repoDir)
 	output, err := executeCommand(t, "--config", configPath, "tokenize", "alpha beta")
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -510,6 +679,40 @@ func TestTokenizeCommandPostsText(t *testing.T) {
 	}
 	if !strings.Contains(output, `"token_count": 2`) {
 		t.Fatalf("output = %q", output)
+	}
+}
+
+func TestTokenizeCommandRequiresInitializedProject(t *testing.T) {
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	_, err := executeCommand(t, "--config", configPath, "tokenize", "alpha beta")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want init guidance")
+	}
+	if !strings.Contains(err.Error(), "project is not initialized") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTokenizeCommandRequiresAdminRole(t *testing.T) {
+	restore := useFakeTokenManager(makeTestTokenWithRole(time.Now().UTC().Add(time.Hour), "org_123", "org:member"), nil)
+	defer restore()
+
+	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
+	_, err := executeCommand(t, "--config", configPath, "tokenize", "alpha beta")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want admin-role guidance")
+	}
+	if !strings.Contains(err.Error(), "org:admin role required") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -528,7 +731,7 @@ func TestLoadAuthenticatedClientRequiresStoredToken(t *testing.T) {
 }
 
 func TestAdminInviteCommandRejectsMissingEmail(t *testing.T) {
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
@@ -542,7 +745,7 @@ func TestAdminInviteCommandRejectsMissingEmail(t *testing.T) {
 }
 
 func TestAdminInviteCommandRejectsUnknownRole(t *testing.T) {
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
@@ -556,7 +759,7 @@ func TestAdminInviteCommandRejectsUnknownRole(t *testing.T) {
 }
 
 func TestExecuteCommandUsesCommandContext(t *testing.T) {
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfig(t, "http://127.0.0.1:8080")
@@ -637,9 +840,249 @@ func TestListCommandRenewsExpiredTokenViaBrowserFlow(t *testing.T) {
 	}
 }
 
-func TestIndexRemoveCommandCallsClearRepoAndResetsManifest(t *testing.T) {
+func TestInitCommandCreatesLocalBootstrapState(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		t.Fatalf("init should not contact backend, saw %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
+	output, err := executeCommand(t, "--config", configPath, "init", "--repo-path", repoDir)
+	if err != nil {
+		t.Fatalf("Execute() error = %v\noutput=%s", err, output)
+	}
+
+	repoID, err := indexer.DeriveRepoID(repoDir)
+	if err != nil {
+		t.Fatalf("DeriveRepoID() error = %v", err)
+	}
+	manifest, err := indexer.LoadManifest("org_123", repoID)
+	if err != nil {
+		t.Fatalf("LoadManifest() error = %v", err)
+	}
+
+	if requests != 0 {
+		t.Fatalf("backend requests = %d, want 0", requests)
+	}
+	if manifest.RepoPath != repoDir {
+		t.Fatalf("manifest.RepoPath = %q, want %q", manifest.RepoPath, repoDir)
+	}
+	if manifest.InitializedAt == "" {
+		t.Fatal("manifest.InitializedAt = empty, want timestamp")
+	}
+	if !strings.Contains(output, `"initialized": true`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"already_initialized": false`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"message": "project initialized"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"repo_id": "`+repoID+`"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, `"manifest_path"`) || strings.Contains(output, `"manifest"`) {
+		t.Fatalf("output should be compact, got %q", output)
+	}
+}
+
+func TestInitCommandVerboseIncludesManifestDetails(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	output, err := executeCommand(t, "--config", configPath, "init", "--repo-path", repoDir, "--verbose")
+	if err != nil {
+		t.Fatalf("Execute() error = %v\noutput=%s", err, output)
+	}
+
+	repoID, err := indexer.DeriveRepoID(repoDir)
+	if err != nil {
+		t.Fatalf("DeriveRepoID() error = %v", err)
+	}
+	manifestPath, err := indexer.ManifestPath("org_123", repoID)
+	if err != nil {
+		t.Fatalf("ManifestPath() error = %v", err)
+	}
+
+	if !strings.Contains(output, `"manifest_path": "`+manifestPath+`"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"manifest": {`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"next_steps": [`) {
+		t.Fatalf("output = %q", output)
+	}
+	if !strings.Contains(output, `"codefind index run"`) || !strings.Contains(output, `"codefind query \u003ctext\u003e"`) || !strings.Contains(output, `"codefind stats"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "--repo-id") || strings.Contains(output, "--repo-path") {
+		t.Fatalf("verbose next steps should not require flags, got %q", output)
+	}
+}
+
+func TestInitCommandRejectsInvalidProjectRoot(t *testing.T) {
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	emptyDir := t.TempDir()
+	_, err := executeCommand(t, "--config", configPath, "init", "--repo-path", emptyDir)
+	if err == nil {
+		t.Fatal("Execute() error = nil, want invalid project root error")
+	}
+	if !strings.Contains(err.Error(), "invalid project root") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestInitCommandRequiresAdminRole(t *testing.T) {
+	restore := useFakeTokenManager(makeTestTokenWithRole(time.Now().UTC().Add(time.Hour), "org_123", "org:member"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := executeCommand(t, "--config", configPath, "init", "--repo-path", repoDir)
+	if err == nil {
+		t.Fatal("Execute() error = nil, want admin-role guidance")
+	}
+	if !strings.Contains(err.Error(), "org:admin role required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestInitCommandRequiresConfig(t *testing.T) {
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	missingConfigPath := filepath.Join(t.TempDir(), "missing-config.json")
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := executeCommand(t, "--config", missingConfigPath, "init", "--repo-path", repoDir)
+	if err == nil {
+		t.Fatal("Execute() error = nil, want config guidance")
+	}
+	if !strings.Contains(err.Error(), "codefind config --server-url") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestInitCommandRequiresAuthentication(t *testing.T) {
+	restore := useFakeTokenManager("", keychain.ErrNotFound)
+	defer restore()
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	_, err := executeCommand(t, "--config", configPath, "init", "--repo-path", repoDir)
+	if err == nil {
+		t.Fatal("Execute() error = nil, want auth guidance")
+	}
+	if !strings.Contains(err.Error(), "codefind auth login") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestInitCommandIsIdempotent(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	if _, err := executeCommand(t, "--config", configPath, "init", "--repo-path", repoDir); err != nil {
+		t.Fatalf("initial Execute() error = %v", err)
+	}
+
+	repoID, err := indexer.DeriveRepoID(repoDir)
+	if err != nil {
+		t.Fatalf("DeriveRepoID() error = %v", err)
+	}
+	manifest, err := indexer.LoadManifest("org_123", repoID)
+	if err != nil {
+		t.Fatalf("LoadManifest() error = %v", err)
+	}
+	manifest.LastCommit = "baseline"
+	manifest.Files["main.go"] = indexer.ManifestFile{Path: "main.go", ContentHash: "abc123"}
+	initializedAt := manifest.InitializedAt
+	if err := indexer.SaveManifest(manifest); err != nil {
+		t.Fatalf("SaveManifest() error = %v", err)
+	}
+
+	secondOutput, err := executeCommand(t, "--config", configPath, "init", "--repo-path", repoDir)
+	if err != nil {
+		t.Fatalf("second Execute() error = %v", err)
+	}
+
+	reloaded, err := indexer.LoadManifest("org_123", repoID)
+	if err != nil {
+		t.Fatalf("LoadManifest() after rerun error = %v", err)
+	}
+	if reloaded.LastCommit != "baseline" {
+		t.Fatalf("reloaded.LastCommit = %q, want baseline", reloaded.LastCommit)
+	}
+	if _, ok := reloaded.Files["main.go"]; !ok {
+		t.Fatalf("reloaded.Files = %#v, want existing file metadata preserved", reloaded.Files)
+	}
+	if reloaded.InitializedAt != initializedAt {
+		t.Fatalf("reloaded.InitializedAt = %q, want %q", reloaded.InitializedAt, initializedAt)
+	}
+	if !strings.Contains(secondOutput, `"already_initialized": true`) {
+		t.Fatalf("output = %q", secondOutput)
+	}
+	if !strings.Contains(secondOutput, `"message": "project already initialized"`) {
+		t.Fatalf("output = %q", secondOutput)
+	}
+}
+
+func TestIndexRemoveCommandCallsClearRepoAndRemovesManifest(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 
 	var sawMethod, sawPath string
 	var sawBody map[string]any
@@ -654,16 +1097,16 @@ func TestIndexRemoveCommandCallsClearRepoAndResetsManifest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
-	output, err := executeCommand(
-		t,
-		"--config", configPath,
-		"index", "remove",
-		"--repo-id", "repo-a",
-	)
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	manifestPath, err := indexer.ManifestPath("org_123", "repo-a")
+	if err != nil {
+		t.Fatalf("ManifestPath() error = %v", err)
+	}
+	output, err := executeCommand(t, "--config", configPath, "index", "remove")
 	if err != nil {
 		t.Fatalf("Execute() error = %v\noutput=%s", err, output)
 	}
@@ -676,18 +1119,18 @@ func TestIndexRemoveCommandCallsClearRepoAndResetsManifest(t *testing.T) {
 	if !strings.Contains(output, `"cleared": true`) {
 		t.Fatalf("output = %q", output)
 	}
+	if _, statErr := os.Stat(manifestPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("manifest still exists after remove: %v", statErr)
+	}
 }
 
 func TestIndexRemoveCommandDoesNotResetManifestOnBackendFailure(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	// Seed a manifest with file state so we can verify it is NOT reset.
-	manifestPath := filepath.Join(homeDir, ".codefind", "manifests", "org_123", "repo-a.json")
-	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o700); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(manifestPath, []byte(`{"schema_version":1,"repo_id":"repo-a","org_id":"org_123","files":{"main.go":{}}}`), 0o600); err != nil {
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
@@ -696,16 +1139,20 @@ func TestIndexRemoveCommandDoesNotResetManifestOnBackendFailure(t *testing.T) {
 	}))
 	defer server.Close()
 
-	restore := useFakeTokenManager("token-123", nil)
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
 	defer restore()
 
 	configPath := writeTestConfigWithOrg(t, server.URL, "org_123")
-	_, err := executeCommand(
-		t,
-		"--config", configPath,
-		"index", "remove",
-		"--repo-id", "repo-a",
-	)
+	initTestProject(t, configPath, repoDir, "--repo-id", "repo-a")
+	manifestPath, err := indexer.ManifestPath("org_123", "repo-a")
+	if err != nil {
+		t.Fatalf("ManifestPath() error = %v", err)
+	}
+	seededContent := []byte(`{"schema_version":1,"repo_id":"repo-a","org_id":"org_123","repo_path":"` + repoDir + `","initialized_at":"2026-03-11T00:00:00Z","files":{"main.go":{}}}`)
+	if err := os.WriteFile(manifestPath, seededContent, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err = executeCommand(t, "--config", configPath, "index", "remove")
 	if err == nil {
 		t.Fatal("expected error from backend failure, got nil")
 	}
@@ -717,5 +1164,25 @@ func TestIndexRemoveCommandDoesNotResetManifestOnBackendFailure(t *testing.T) {
 	}
 	if !strings.Contains(string(content), `"main.go"`) {
 		t.Fatalf("manifest was reset despite backend failure: %s", content)
+	}
+}
+
+func TestIndexRemoveCommandRequiresAdminRole(t *testing.T) {
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestTokenWithRole(time.Now().UTC().Add(time.Hour), "org_123", "org:member"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	_, err := executeCommand(t, "--config", configPath, "index", "remove")
+	if err == nil {
+		t.Fatal("Execute() error = nil, want admin-role guidance")
+	}
+	if !strings.Contains(err.Error(), "org:admin role required") {
+		t.Fatalf("error = %v", err)
 	}
 }
