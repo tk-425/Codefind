@@ -1167,6 +1167,7 @@ func TestReadCommandsAdvertiseJSONFlagInHelp(t *testing.T) {
 		{"list", "--help"},
 		{"stats", "--help"},
 		{"query", "--help"},
+		{"init", "--help"},
 		{"lsp", "status", "--help"},
 		{"org", "list", "--help"},
 		{"admin", "list", "--help"},
@@ -1227,19 +1228,22 @@ func TestInitCommandCreatesLocalBootstrapState(t *testing.T) {
 	if manifest.InitializedAt == "" {
 		t.Fatal("manifest.InitializedAt = empty, want timestamp")
 	}
-	if !strings.Contains(output, `"initialized": true`) {
+	if !strings.Contains(output, "Status: project initialized") {
 		t.Fatalf("output = %q", output)
 	}
-	if !strings.Contains(output, `"already_initialized": false`) {
+	if !strings.Contains(output, repoID) {
 		t.Fatalf("output = %q", output)
 	}
-	if !strings.Contains(output, `"message": "project initialized"`) {
+	if !strings.Contains(output, repoDir) {
 		t.Fatalf("output = %q", output)
 	}
-	if !strings.Contains(output, `"repo_id": "`+repoID+`"`) {
+	if !strings.Contains(output, "Next Step: codefind index run") {
 		t.Fatalf("output = %q", output)
 	}
-	if strings.Contains(output, `"manifest_path"`) || strings.Contains(output, `"manifest"`) {
+	if !strings.Contains(output, "┏━╸┏━┓╺┳┓┏━╸") {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "Manifest Path:") || strings.Contains(output, "\"manifest\"") {
 		t.Fatalf("output should be compact, got %q", output)
 	}
 }
@@ -1271,16 +1275,13 @@ func TestInitCommandVerboseIncludesManifestDetails(t *testing.T) {
 		t.Fatalf("ManifestPath() error = %v", err)
 	}
 
-	if !strings.Contains(output, `"manifest_path": "`+manifestPath+`"`) {
+	if !strings.Contains(output, "Manifest Path: "+manifestPath) {
 		t.Fatalf("output = %q", output)
 	}
-	if !strings.Contains(output, `"manifest": {`) {
+	if !strings.Contains(output, "Next Steps") {
 		t.Fatalf("output = %q", output)
 	}
-	if !strings.Contains(output, `"next_steps": [`) {
-		t.Fatalf("output = %q", output)
-	}
-	if !strings.Contains(output, `"codefind index run"`) || !strings.Contains(output, `"codefind query \u003ctext\u003e"`) || !strings.Contains(output, `"codefind stats"`) {
+	if !strings.Contains(output, "codefind index run") || !strings.Contains(output, "codefind query <text>") || !strings.Contains(output, "codefind stats") {
 		t.Fatalf("output = %q", output)
 	}
 	if strings.Contains(output, "--repo-id") || strings.Contains(output, "--repo-path") {
@@ -1410,11 +1411,36 @@ func TestInitCommandIsIdempotent(t *testing.T) {
 	if reloaded.InitializedAt != initializedAt {
 		t.Fatalf("reloaded.InitializedAt = %q, want %q", reloaded.InitializedAt, initializedAt)
 	}
-	if !strings.Contains(secondOutput, `"already_initialized": true`) {
+	if !strings.Contains(secondOutput, "Status: project already initialized") {
 		t.Fatalf("output = %q", secondOutput)
 	}
-	if !strings.Contains(secondOutput, `"message": "project already initialized"`) {
+	if !strings.Contains(secondOutput, "Next Step: codefind index run") {
 		t.Fatalf("output = %q", secondOutput)
+	}
+}
+
+func TestInitCommandJSONFlagPrintsJSONOnly(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	restore := useFakeTokenManager(makeTestToken(time.Now().UTC().Add(time.Hour), "org_123"), nil)
+	defer restore()
+
+	configPath := writeTestConfigWithOrg(t, "http://127.0.0.1:8080", "org_123")
+	output, err := executeCommand(t, "--config", configPath, "init", "--repo-path", repoDir, "--json")
+	if err != nil {
+		t.Fatalf("Execute() error = %v\noutput=%s", err, output)
+	}
+	if !strings.Contains(output, `"message": "project initialized"`) {
+		t.Fatalf("output = %q", output)
+	}
+	if strings.Contains(output, "Status:") || strings.Contains(output, "┏━╸┏━┓╺┳┓┏━╸") {
+		t.Fatalf("output = %q", output)
 	}
 }
 

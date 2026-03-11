@@ -107,6 +107,53 @@ func writeCollectionListOutput(stdout io.Writer, response api.CollectionListResp
 	return nil
 }
 
+func writeInitOutput(stdout io.Writer, response initCommandResponse, verbose bool) error {
+	styles := newOutputStyles(stdout)
+	if _, err := fmt.Fprintf(stdout, "%s\n\n", styles.accent(indexRunBanner)); err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprintf(stdout, "%s %s\n", styles.header("Status:"), styles.value(response.Message)); err != nil {
+		return err
+	}
+	if response.RepoID != "" {
+		if _, err := fmt.Fprintf(stdout, "%s %s\n", styles.label("Repo ID:"), styles.value(response.RepoID)); err != nil {
+			return err
+		}
+	}
+	if response.RepoPath != "" {
+		if _, err := fmt.Fprintf(stdout, "%s %s\n", styles.label("Repo Path:"), styles.value(response.RepoPath)); err != nil {
+			return err
+		}
+	}
+	if response.NextStep != "" {
+		if _, err := fmt.Fprintf(stdout, "%s %s\n", styles.label("Next Step:"), styles.value(response.NextStep)); err != nil {
+			return err
+		}
+	}
+
+	if !verbose {
+		return nil
+	}
+
+	if response.ManifestPath != "" {
+		if _, err := fmt.Fprintf(stdout, "\n%s %s\n", styles.header("Manifest Path:"), styles.muted(response.ManifestPath)); err != nil {
+			return err
+		}
+	}
+	if len(response.NextSteps) > 0 {
+		if _, err := fmt.Fprintf(stdout, "\n%s\n", styles.header("Next Steps")); err != nil {
+			return err
+		}
+		for _, step := range response.NextSteps {
+			if _, err := fmt.Fprintf(stdout, "%s %s\n", styles.accent("•"), styles.value(step)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func writeOrgListOutput(stdout io.Writer, response api.OrgListResponse) error {
 	styles := newOutputStyles(stdout)
 	if _, err := fmt.Fprintf(stdout, "%s %s\n", styles.header("Organizations:"), styles.value(response.TotalCount)); err != nil {
