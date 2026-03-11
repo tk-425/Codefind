@@ -79,6 +79,7 @@ globally with the documented /usr/local/bin flow.`),
 	rootCmd.AddCommand(newStatsCommand(&configPath))
 	rootCmd.AddCommand(newQueryCommand(&configPath))
 	rootCmd.AddCommand(newTokenizeCommand(&configPath))
+	rootCmd.AddCommand(newInitCommand(&configPath))
 	rootCmd.AddCommand(newIndexCommand(&configPath))
 	rootCmd.AddCommand(newCleanupCommand(&configPath))
 	rootCmd.AddCommand(newLSPCommand(&configPath))
@@ -340,10 +341,21 @@ func newStatsCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cfg, err := loadRequiredConfig(*configPath)
+			if err != nil {
+				return err
+			}
+			manifest, _, err := resolveInitializedProject(cfg, "")
+			if err != nil {
+				return err
+			}
 
 			repoID := ""
 			if !options.All {
-				repoID = strings.TrimSpace(options.RepoID)
+				repoID, err = resolveScopedRepoID(manifest, options.RepoID)
+				if err != nil {
+					return err
+				}
 			}
 			response, err := apiClient.GetStats(cmd.Context(), repoID)
 			if err != nil {
@@ -374,6 +386,14 @@ func newQueryCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			cfg, err := loadRequiredConfig(*configPath)
+			if err != nil {
+				return err
+			}
+			manifest, _, err := resolveInitializedProject(cfg, "")
+			if err != nil {
+				return err
+			}
 
 			payload := api.QueryRequest{
 				QueryText: args[0],
@@ -384,7 +404,10 @@ func newQueryCommand(configPath *string) *cobra.Command {
 				TopK:      options.TopK,
 			}
 			if !options.All {
-				payload.RepoID = strings.TrimSpace(options.RepoID)
+				payload.RepoID, err = resolveScopedRepoID(manifest, options.RepoID)
+				if err != nil {
+					return err
+				}
 			}
 
 			response, err := apiClient.Query(cmd.Context(), payload)
@@ -411,8 +434,15 @@ func newTokenizeCommand(configPath *string) *cobra.Command {
 		Short: "Tokenize text using the server tokenizer",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := requireAdminClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
+				return err
+			}
+			cfg, err := loadRequiredConfig(*configPath)
+			if err != nil {
+				return err
+			}
+			if _, _, err := resolveInitializedProject(cfg, ""); err != nil {
 				return err
 			}
 			response, err := apiClient.Tokenize(cmd.Context(), api.TokenizeRequest{Text: args[0]})
@@ -422,6 +452,96 @@ func newTokenizeCommand(configPath *string) *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), response)
 		},
 	}
+}
+
+func newInitCommand(configPath *string) *cobra.Command {
+	var (
+		repoID   string
+		repoPath string
+		verbose  bool
+	)
+
+	command := &cobra.Command{
+		Use:   "init",
+		Short: "Initialize the current project for future indexing",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if _, err := requireAdminClient(cmd.Context(), cmd.OutOrStdout(), *configPath); err != nil {
+				return err
+			}
+
+			cfg, err := loadRequiredConfig(*configPath)
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(cfg.ActiveOrgID) == "" {
+				return errors.New("active_org_id is not configured; run 'codefind auth login'")
+			}
+
+			resolvedRepoPath := strings.TrimSpace(repoPath)
+			if resolvedRepoPath == "" {
+				resolvedRepoPath, err = os.Getwd()
+				if err != nil {
+					return fmt.Errorf("resolve current directory: %w", err)
+				}
+			}
+			resolvedRepoPath, err = filepath.Abs(resolvedRepoPath)
+			if err != nil {
+				return fmt.Errorf("resolve repo path: %w", err)
+			}
+			if err := indexer.ValidateProjectRoot(resolvedRepoPath); err != nil {
+				return fmt.Errorf("invalid project root: %w", err)
+			}
+
+			resolvedRepoID := strings.TrimSpace(repoID)
+			if resolvedRepoID == "" {
+				resolvedRepoID, err = indexer.DeriveRepoID(resolvedRepoPath)
+				if err != nil {
+					return fmt.Errorf("derive repo_id: %w", err)
+				}
+			} else if _, err := indexer.ManifestPath(cfg.ActiveOrgID, resolvedRepoID); err != nil {
+				return err
+			}
+
+			manifest, alreadyInitialized, err := indexer.InitManifest(resolvedRepoPath, cfg.ActiveOrgID, resolvedRepoID, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			message := "project initialized"
+			if alreadyInitialized {
+				message = "project already initialized"
+			}
+
+			response := map[string]any{
+				"status":              "ok",
+				"message":             message,
+				"initialized":         true,
+				"already_initialized": alreadyInitialized,
+				"repo_id":             resolvedRepoID,
+				"repo_path":           resolvedRepoPath,
+				"next_step":           "codefind index run",
+			}
+			if verbose {
+				manifestPath, err := indexer.ManifestPath(cfg.ActiveOrgID, resolvedRepoID)
+				if err != nil {
+					return err
+				}
+				response["manifest_path"] = manifestPath
+				response["manifest"] = manifest
+				response["next_steps"] = []string{
+					"codefind index run",
+					"codefind query <text>",
+					"codefind stats",
+				}
+			}
+
+			return writeJSON(cmd.OutOrStdout(), response)
+		},
+	}
+
+	command.Flags().StringVar(&repoID, "repo-id", "", "override the derived repo identifier")
+	command.Flags().StringVar(&repoPath, "repo-path", "", "project path to initialize (defaults to current directory)")
+	command.Flags().BoolVar(&verbose, "verbose", false, "include manifest details in the response")
+	return command
 }
 
 func newIndexCommand(configPath *string) *cobra.Command {
@@ -448,11 +568,8 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 		Use:   "run",
 		Short: "Index a repo for the current organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(repoID) == "" {
-				return errors.New("--repo-id is required")
-			}
 			if strings.TrimSpace(repoPath) == "" {
-				return errors.New("--repo-path is required")
+				repoPath = "."
 			}
 			if concurrency < 1 {
 				return errors.New("--concurrency must be >= 1")
@@ -461,7 +578,7 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 				return errors.New("--window cannot be combined with --retry-lsp")
 			}
 
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := requireAdminClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -473,17 +590,21 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 				return errors.New("active_org_id is not configured; run 'codefind auth login'")
 			}
 
-			manifest, err := indexer.LoadManifest(cfg.ActiveOrgID, repoID)
+			manifest, resolvedRepoPath, err := resolveInitializedProject(cfg, repoPath)
 			if err != nil {
 				return err
 			}
-			idx, err := indexer.New(repoPath, manifest)
+			resolvedRepoID, err := resolveScopedRepoID(manifest, repoID)
+			if err != nil {
+				return err
+			}
+			idx, err := indexer.New(resolvedRepoPath, manifest)
 			if err != nil {
 				return err
 			}
 
 			response, err := idx.Index(cmd.Context(), indexer.RunOptions{
-				RepoID:      repoID,
+				RepoID:      resolvedRepoID,
 				OrgID:       cfg.ActiveOrgID,
 				Force:       force,
 				Window:      window,
@@ -497,8 +618,8 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 		},
 	}
 
-	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to index")
-	command.Flags().StringVar(&repoPath, "repo-path", "", "local repo path to index")
+	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to index (defaults to the current initialized project)")
+	command.Flags().StringVar(&repoPath, "repo-path", "", "project path to index (defaults to current directory)")
 	command.Flags().BoolVar(&force, "force", false, "reindex the full repo")
 	command.Flags().BoolVar(&window, "window", false, "use window chunking only")
 	command.Flags().BoolVar(&retryLSP, "retry-lsp", false, "retry LSP chunking for previously degraded unchanged files")
@@ -507,17 +628,16 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 }
 
 func newIndexRemoveCommand(configPath *string) *cobra.Command {
-	var repoID string
+	var (
+		repoID   string
+		repoPath string
+	)
 
 	command := &cobra.Command{
 		Use:   "remove",
 		Short: "Remove all indexed backend data for a repo and reset its local manifest",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(repoID) == "" {
-				return errors.New("--repo-id is required")
-			}
-
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := requireAdminClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
 			if err != nil {
 				return err
 			}
@@ -529,12 +649,21 @@ func newIndexRemoveCommand(configPath *string) *cobra.Command {
 				return errors.New("active_org_id is not configured; run 'codefind auth login'")
 			}
 
-			response, err := apiClient.ClearRepo(cmd.Context(), api.RepoClearRequest{RepoID: repoID})
+			manifest, _, err := resolveInitializedProject(cfg, repoPath)
+			if err != nil {
+				return err
+			}
+			resolvedRepoID, err := resolveScopedRepoID(manifest, repoID)
 			if err != nil {
 				return err
 			}
 
-			if resetErr := indexer.ResetManifest(cfg.ActiveOrgID, repoID); resetErr != nil {
+			response, err := apiClient.ClearRepo(cmd.Context(), api.RepoClearRequest{RepoID: resolvedRepoID})
+			if err != nil {
+				return err
+			}
+
+			if resetErr := indexer.ResetManifest(cfg.ActiveOrgID, resolvedRepoID); resetErr != nil {
 				if writeErr := writeJSON(cmd.OutOrStdout(), response); writeErr != nil {
 					return writeErr
 				}
@@ -545,7 +674,8 @@ func newIndexRemoveCommand(configPath *string) *cobra.Command {
 		},
 	}
 
-	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to remove from the index")
+	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to remove from the index (defaults to the current initialized project)")
+	command.Flags().StringVar(&repoPath, "repo-path", "", "project path to remove from the index (defaults to current directory)")
 	return command
 }
 
@@ -560,9 +690,6 @@ func newCleanupCommand(configPath *string) *cobra.Command {
 		Use:   "cleanup",
 		Short: "Inspect or purge tombstoned chunks for a repo",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(repoID) == "" {
-				return errors.New("--repo-id is required")
-			}
 			if listMode && olderThanDays > 0 {
 				return errors.New("--list cannot be combined with --older-than")
 			}
@@ -570,19 +697,31 @@ func newCleanupCommand(configPath *string) *cobra.Command {
 				return errors.New("either --list or --older-than must be provided")
 			}
 
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := requireAdminClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			if err != nil {
+				return err
+			}
+			cfg, err := loadRequiredConfig(*configPath)
+			if err != nil {
+				return err
+			}
+			manifest, _, err := resolveInitializedProject(cfg, "")
+			if err != nil {
+				return err
+			}
+			resolvedRepoID, err := resolveScopedRepoID(manifest, repoID)
 			if err != nil {
 				return err
 			}
 			if listMode {
-				response, err := apiClient.ListTombstonedChunks(cmd.Context(), repoID)
+				response, err := apiClient.ListTombstonedChunks(cmd.Context(), resolvedRepoID)
 				if err != nil {
 					return err
 				}
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			response, err := apiClient.PurgeChunks(cmd.Context(), api.ChunkPurgeRequest{
-				RepoID:        repoID,
+				RepoID:        resolvedRepoID,
 				OlderThanDays: olderThanDays,
 			})
 			if err != nil {
@@ -592,7 +731,7 @@ func newCleanupCommand(configPath *string) *cobra.Command {
 		},
 	}
 
-	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to inspect or purge")
+	command.Flags().StringVar(&repoID, "repo-id", "", "repo identifier to inspect or purge (defaults to the current initialized project)")
 	command.Flags().BoolVar(&listMode, "list", false, "list tombstoned chunks")
 	command.Flags().IntVar(&olderThanDays, "older-than", 0, "purge tombstoned chunks older than the given number of days")
 	return command
@@ -775,6 +914,47 @@ func loadRequiredConfig(path string) (config.Config, error) {
 	return config.Config{}, err
 }
 
+func resolveInitializedProject(cfg config.Config, repoPath string) (*indexer.Manifest, string, error) {
+	if strings.TrimSpace(cfg.ActiveOrgID) == "" {
+		return nil, "", errors.New("active_org_id is not configured; run 'codefind auth login'")
+	}
+
+	resolvedRepoPath := strings.TrimSpace(repoPath)
+	if resolvedRepoPath == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, "", fmt.Errorf("resolve current directory: %w", err)
+		}
+		resolvedRepoPath = cwd
+	}
+
+	absRepoPath, err := filepath.Abs(resolvedRepoPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve repo path: %w", err)
+	}
+
+	manifest, err := indexer.LoadInitializedManifestForPath(cfg.ActiveOrgID, absRepoPath)
+	if err != nil {
+		if errors.Is(err, indexer.ErrProjectNotInitialized) {
+			return nil, absRepoPath, fmt.Errorf("project is not initialized; run 'codefind init --repo-path %s' first", absRepoPath)
+		}
+		return nil, absRepoPath, err
+	}
+
+	return manifest, manifest.RepoPath, nil
+}
+
+func resolveScopedRepoID(manifest *indexer.Manifest, repoID string) (string, error) {
+	resolvedRepoID := strings.TrimSpace(repoID)
+	if resolvedRepoID == "" {
+		return manifest.RepoID, nil
+	}
+	if resolvedRepoID != manifest.RepoID {
+		return "", fmt.Errorf("current directory is initialized as repo %s; omit --repo-id or use --repo-id %s", manifest.RepoID, manifest.RepoID)
+	}
+	return resolvedRepoID, nil
+}
+
 func loadAuthenticatedClient(ctx context.Context, stdout io.Writer, path string) (*client.Client, error) {
 	cfg, err := loadRequiredConfig(path)
 	if err != nil {
@@ -804,6 +984,26 @@ func loadAuthenticatedClient(ctx context.Context, stdout io.Writer, path string)
 	}
 
 	return newAPIClient(cfg.ServerURL, defaultTokenManager())
+}
+
+func requireAdminClient(ctx context.Context, stdout io.Writer, path string) (*client.Client, error) {
+	apiClient, err := loadAuthenticatedClient(ctx, stdout, path)
+	if err != nil {
+		return nil, err
+	}
+
+	token, err := defaultTokenManager().LoadToken()
+	if err != nil {
+		return nil, err
+	}
+	claims, err := authflow.DecodeTokenClaims(token)
+	if err != nil {
+		return nil, fmt.Errorf("decode stored token claims: %w", err)
+	}
+	if claims.OrgRole != "org:admin" {
+		return nil, errors.New("org:admin role required for this command")
+	}
+	return apiClient, nil
 }
 
 func runBrowserLogin(ctx context.Context, stdout io.Writer, configPath string) error {

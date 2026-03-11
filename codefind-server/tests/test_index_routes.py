@@ -504,3 +504,26 @@ def test_index_remove_route_emits_audit_events(monkeypatch):
     assert [e["result"] for e in events] == ["start", "success"]
     assert events[0]["event_type"] == "index.remove"
     assert events[1]["metadata"]["cleared"] is True
+
+
+def test_index_remove_route_emits_failure_audit_event(monkeypatch):
+    class FailingIndexingServiceWithClear(DummyIndexingService):
+        async def clear_repo_index(self, *, org_id: str, repo_id: str):
+            raise RuntimeError("clear failed")
+
+    app = _make_app(FailingIndexingServiceWithClear())
+    app.dependency_overrides[require_admin] = _require_admin
+    events = []
+    monkeypatch.setattr(index_routes, "emit_audit_event", lambda **kwargs: events.append(kwargs))
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.request(
+            "DELETE",
+            "/index/remove",
+            json={"repo_id": "repo-a"},
+        )
+
+    assert response.status_code == 500
+    assert [e["result"] for e in events] == ["start", "failure"]
+    assert events[0]["event_type"] == "index.remove"
+    assert events[1]["metadata"]["reason"] == "clear failed"

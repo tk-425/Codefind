@@ -38,6 +38,63 @@ func TestValidateRepoPath(t *testing.T) {
 	}
 }
 
+func TestValidateProjectRoot(t *testing.T) {
+	t.Parallel()
+
+	gitRepo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(gitRepo, ".git"), 0o755); err != nil {
+		t.Fatalf("Mkdir(.git) error = %v", err)
+	}
+
+	codeRepo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(codeRepo, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(main.go) error = %v", err)
+	}
+
+	emptyDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+	}{
+		{name: "git repo", path: gitRepo},
+		{name: "supported source files", path: codeRepo},
+		{name: "empty directory", path: emptyDir, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateProjectRoot(tt.path)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ValidateProjectRoot(%q) error = %v, wantErr %v", tt.path, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDeriveRepoID(t *testing.T) {
+	t.Parallel()
+
+	repoPath := filepath.Join(t.TempDir(), "Code Find.v2")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(main.go) error = %v", err)
+	}
+
+	repoID, err := DeriveRepoID(repoPath)
+	if err != nil {
+		t.Fatalf("DeriveRepoID() error = %v", err)
+	}
+	if repoID != "code-find-v2" {
+		t.Fatalf("DeriveRepoID() = %q, want code-find-v2", repoID)
+	}
+}
+
 func TestValidateCommitHash(t *testing.T) {
 	t.Parallel()
 
