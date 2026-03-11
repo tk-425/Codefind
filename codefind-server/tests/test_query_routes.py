@@ -46,10 +46,13 @@ class DummyVectorStore:
     async def count(self, collection: str, filters: dict[str, object]) -> int:
         self.count_calls.append({"collection": collection, "filters": filters})
         counts = {
-            "org_123_repo-a": 12,
-            "org_123_repo-b": 8,
+            ("org_123_repo-a", "active"): 12,
+            ("org_123_repo-a", "tombstoned"): 3,
+            ("org_123_repo-b", "active"): 8,
+            ("org_123_repo-b", "tombstoned"): 1,
         }
-        return counts.get(collection, 0)
+        status = filters.get("status")
+        return counts.get((collection, status), 0)
 
 
 class DummyOllama:
@@ -103,9 +106,15 @@ def test_stats_are_org_scoped():
     assert response.status_code == 200
     assert response.json()["repo_count"] == 2
     assert response.json()["chunk_count"] == 20
+    assert response.json()["active_chunks"] == 20
+    assert response.json()["deleted_chunks"] == 4
+    assert response.json()["total_chunks"] == 24
+    assert response.json()["overhead_percent"] == 20.0
     assert vector_store.count_calls == [
         {"collection": "org_123_repo-a", "filters": {"status": "active"}},
+        {"collection": "org_123_repo-a", "filters": {"status": "tombstoned"}},
         {"collection": "org_123_repo-b", "filters": {"status": "active"}},
+        {"collection": "org_123_repo-b", "filters": {"status": "tombstoned"}},
     ]
 
 

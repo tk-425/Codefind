@@ -124,7 +124,9 @@ func newConfigCommand(configPath *string) *cobra.Command {
 }
 
 func newHealthCommand(configPath *string) *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+
+	command := &cobra.Command{
 		Use:   "health",
 		Short: "Check the configured server health endpoint",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -146,9 +148,14 @@ func newHealthCommand(configPath *string) *cobra.Command {
 				return err
 			}
 
-			return writeJSON(cmd.OutOrStdout(), response)
+			return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, response, func(stdout io.Writer) error {
+				return writeHealthOutput(stdout, response)
+			})
 		},
 	}
+
+	addJSONFlag(command, &jsonOutput)
+	return command
 }
 
 func newAuthCommand(configPath *string) *cobra.Command {
@@ -174,11 +181,13 @@ func newOrgCommand(configPath *string) *cobra.Command {
 }
 
 func newOrgListCommand(configPath *string) *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+
+	command := &cobra.Command{
 		Use:   "list",
 		Short: "List organizations available to the authenticated user",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath, jsonOutput)
 			if err != nil {
 				return err
 			}
@@ -187,9 +196,14 @@ func newOrgListCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), response)
+			return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, response, func(stdout io.Writer) error {
+				return writeOrgListOutput(stdout, response)
+			})
 		},
 	}
+
+	addJSONFlag(command, &jsonOutput)
+	return command
 }
 
 func newAdminCommand(configPath *string) *cobra.Command {
@@ -205,11 +219,13 @@ func newAdminCommand(configPath *string) *cobra.Command {
 }
 
 func newAdminListCommand(configPath *string) *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+
+	command := &cobra.Command{
 		Use:   "list",
 		Short: "List members and invitations for the active token organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath, jsonOutput)
 			if err != nil {
 				return err
 			}
@@ -222,13 +238,18 @@ func newAdminListCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-
-			return writeJSON(cmd.OutOrStdout(), map[string]any{
+			payload := map[string]any{
 				"members":     members,
 				"invitations": invitations,
+			}
+			return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, payload, func(stdout io.Writer) error {
+				return writeAdminListOutput(stdout, members, invitations)
 			})
 		},
 	}
+
+	addJSONFlag(command, &jsonOutput)
+	return command
 }
 
 func newAdminInviteCommand(configPath *string) *cobra.Command {
@@ -248,7 +269,7 @@ func newAdminInviteCommand(configPath *string) *cobra.Command {
 				return errors.New("--role must be org:admin or org:member")
 			}
 
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath, false)
 			if err != nil {
 				return err
 			}
@@ -274,7 +295,7 @@ func newAdminRevokeInviteCommand(configPath *string) *cobra.Command {
 		Short: "Revoke a pending invitation in the current token organization",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath, false)
 			if err != nil {
 				return err
 			}
@@ -294,7 +315,7 @@ func newAdminRemoveCommand(configPath *string) *cobra.Command {
 		Short: "Remove a member from the current token organization",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath, false)
 			if err != nil {
 				return err
 			}
@@ -309,11 +330,13 @@ func newAdminRemoveCommand(configPath *string) *cobra.Command {
 }
 
 func newListCommand(configPath *string) *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+
+	command := &cobra.Command{
 		Use:   "list",
 		Short: "List indexed repos available to the current organization",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath, jsonOutput)
 			if err != nil {
 				return err
 			}
@@ -321,23 +344,25 @@ func newListCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), response)
+			return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, response, func(stdout io.Writer) error {
+				return writeCollectionListOutput(stdout, response)
+			})
 		},
 	}
+
+	addJSONFlag(command, &jsonOutput)
+	return command
 }
 
 func newStatsCommand(configPath *string) *cobra.Command {
 	var options stats.Options
+	var jsonOutput bool
 
 	command := &cobra.Command{
 		Use:   "stats",
-		Short: "Show chunk stats for a repo or the whole active organization",
+		Short: "Show chunk stats for the current initialized repo",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if options.All && strings.TrimSpace(options.RepoID) != "" {
-				return errors.New("--all cannot be combined with --repo-id")
-			}
-
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath, jsonOutput)
 			if err != nil {
 				return err
 			}
@@ -350,28 +375,28 @@ func newStatsCommand(configPath *string) *cobra.Command {
 				return err
 			}
 
-			repoID := ""
-			if !options.All {
-				repoID, err = resolveScopedRepoID(manifest, options.RepoID)
-				if err != nil {
-					return err
-				}
+			repoID, err := resolveScopedRepoID(manifest, options.RepoID)
+			if err != nil {
+				return err
 			}
 			response, err := apiClient.GetStats(cmd.Context(), repoID)
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), response)
+			return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, response, func(stdout io.Writer) error {
+				return writeStatsOutput(stdout, response)
+			})
 		},
 	}
 
 	command.Flags().StringVar(&options.RepoID, "repo-id", "", "repo identifier to inspect")
-	command.Flags().BoolVar(&options.All, "all", false, "show org-wide stats")
+	addJSONFlag(command, &jsonOutput)
 	return command
 }
 
 func newQueryCommand(configPath *string) *cobra.Command {
 	var options query.Options
+	var jsonOutput bool
 
 	command := &cobra.Command{
 		Use:   "query <text>",
@@ -382,7 +407,7 @@ func newQueryCommand(configPath *string) *cobra.Command {
 				return errors.New("--all cannot be combined with --repo-id")
 			}
 
-			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath)
+			apiClient, err := loadAuthenticatedClient(cmd.Context(), cmd.OutOrStdout(), *configPath, jsonOutput)
 			if err != nil {
 				return err
 			}
@@ -414,7 +439,9 @@ func newQueryCommand(configPath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), response)
+			return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, response, func(stdout io.Writer) error {
+				return writeQueryOutput(stdout, response)
+			})
 		},
 	}
 
@@ -425,6 +452,7 @@ func newQueryCommand(configPath *string) *cobra.Command {
 	command.Flags().IntVar(&options.Page, "page", 1, "1-based result page")
 	command.Flags().IntVar(&options.PageSize, "page-size", 10, "results per page")
 	command.Flags().IntVar(&options.TopK, "top-k", 10, "per-collection match limit before pagination")
+	addJSONFlag(command, &jsonOutput)
 	return command
 }
 
@@ -752,33 +780,42 @@ func newLSPCommand(_ *string) *cobra.Command {
 		Short: "Inspect LSP availability for indexing",
 	}
 
-	lspCmd.AddCommand(&cobra.Command{
+	lspCmd.AddCommand(newLSPStatusCommand())
+
+	return lspCmd
+}
+
+type lspLanguageStatus struct {
+	Language   string `json:"language"`
+	Name       string `json:"name"`
+	Executable string `json:"executable"`
+	Path       string `json:"path,omitempty"`
+	Available  bool   `json:"available"`
+}
+
+type lspStatusResponse struct {
+	SupportedCount int                 `json:"supported_count"`
+	AvailableCount int                 `json:"available_count"`
+	Languages      []lspLanguageStatus `json:"languages"`
+}
+
+func newLSPStatusCommand() *cobra.Command {
+	var jsonOutput bool
+
+	command := &cobra.Command{
 		Use:   "status",
 		Short: "Show the current LSP status for supported languages",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			type languageStatus struct {
-				Language   string `json:"language"`
-				Name       string `json:"name"`
-				Executable string `json:"executable"`
-				Path       string `json:"path,omitempty"`
-				Available  bool   `json:"available"`
-			}
-			type statusResponse struct {
-				SupportedCount int              `json:"supported_count"`
-				AvailableCount int              `json:"available_count"`
-				Languages      []languageStatus `json:"languages"`
-			}
-
 			discovered := lsp.DiscoverAvailability()
-			response := statusResponse{
+			response := lspStatusResponse{
 				SupportedCount: len(discovered),
-				Languages:      make([]languageStatus, 0, len(discovered)),
+				Languages:      make([]lspLanguageStatus, 0, len(discovered)),
 			}
 			for _, entry := range discovered {
 				if entry.Available {
 					response.AvailableCount++
 				}
-				response.Languages = append(response.Languages, languageStatus{
+				response.Languages = append(response.Languages, lspLanguageStatus{
 					Language:   entry.Language,
 					Name:       entry.Name,
 					Executable: entry.Executable,
@@ -787,11 +824,14 @@ func newLSPCommand(_ *string) *cobra.Command {
 				})
 			}
 
-			return writeJSON(cmd.OutOrStdout(), response)
+			return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, response, func(stdout io.Writer) error {
+				return writeLSPStatusOutput(stdout, response)
+			})
 		},
-	})
+	}
 
-	return lspCmd
+	addJSONFlag(command, &jsonOutput)
+	return command
 }
 
 func newAuthLoginCommand(configPath *string) *cobra.Command {
@@ -835,7 +875,9 @@ func newAuthLogoutCommand(configPath *string) *cobra.Command {
 }
 
 func newAuthStatusCommand(configPath *string) *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+
+	command := &cobra.Command{
 		Use:   "status",
 		Short: "Show CLI authentication status",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -852,7 +894,9 @@ func newAuthStatusCommand(configPath *string) *cobra.Command {
 			token, err := defaultTokenManager().LoadToken()
 			if err != nil {
 				if errors.Is(err, keychain.ErrNotFound) {
-					return writeJSON(cmd.OutOrStdout(), status)
+					return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, status, func(stdout io.Writer) error {
+						return writeAuthStatusOutput(stdout, status)
+					})
 				}
 				return err
 			}
@@ -868,9 +912,14 @@ func newAuthStatusCommand(configPath *string) *cobra.Command {
 				status["expired"] = time.Now().UTC().After(expiry)
 			}
 
-			return writeJSON(cmd.OutOrStdout(), status)
+			return writeCommandOutput(cmd.OutOrStdout(), jsonOutput, status, func(stdout io.Writer) error {
+				return writeAuthStatusOutput(stdout, status)
+			})
 		},
 	}
+
+	addJSONFlag(command, &jsonOutput)
+	return command
 }
 
 func runConfigShow(stdout io.Writer, path string) error {
@@ -964,7 +1013,7 @@ func resolveScopedRepoID(manifest *indexer.Manifest, repoID string) (string, err
 	return resolvedRepoID, nil
 }
 
-func loadAuthenticatedClient(ctx context.Context, stdout io.Writer, path string) (*client.Client, error) {
+func loadAuthenticatedClient(ctx context.Context, stdout io.Writer, path string, quiet bool) (*client.Client, error) {
 	cfg, err := loadRequiredConfig(path)
 	if err != nil {
 		return nil, err
@@ -984,8 +1033,10 @@ func loadAuthenticatedClient(ctx context.Context, stdout io.Writer, path string)
 		return nil, errors.New("stored token is empty; run 'codefind auth login'")
 	}
 	if expiry, err := authflow.TokenExpiryTime(token); err == nil && time.Now().UTC().After(expiry) {
-		if _, writeErr := fmt.Fprintln(stdout, "stored token expired; renewing via browser session..."); writeErr != nil {
-			return nil, writeErr
+		if !quiet {
+			if _, writeErr := fmt.Fprintln(stdout, "stored token expired; renewing via browser session..."); writeErr != nil {
+				return nil, writeErr
+			}
 		}
 		if err := browserLoginRunner(ctx, stdout, path); err != nil {
 			return nil, err
@@ -996,7 +1047,7 @@ func loadAuthenticatedClient(ctx context.Context, stdout io.Writer, path string)
 }
 
 func requireAdminClient(ctx context.Context, stdout io.Writer, path string) (*client.Client, error) {
-	apiClient, err := loadAuthenticatedClient(ctx, stdout, path)
+	apiClient, err := loadAuthenticatedClient(ctx, stdout, path, false)
 	if err != nil {
 		return nil, err
 	}

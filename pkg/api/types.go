@@ -72,10 +72,14 @@ type RepoStats struct {
 }
 
 type StatsResponse struct {
-	RepoID     string      `json:"repo_id,omitempty"`
-	RepoCount  int         `json:"repo_count"`
-	ChunkCount int         `json:"chunk_count"`
-	Repos      []RepoStats `json:"repos"`
+	RepoID          string      `json:"repo_id,omitempty"`
+	RepoCount       int         `json:"repo_count"`
+	ChunkCount      int         `json:"chunk_count"`
+	ActiveChunks    int         `json:"active_chunks"`
+	DeletedChunks   int         `json:"deleted_chunks"`
+	TotalChunks     int         `json:"total_chunks"`
+	OverheadPercent float64     `json:"overhead_percent"`
+	Repos           []RepoStats `json:"repos"`
 }
 
 type QueryRequest struct {
