@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from codefind_server.adapters.base import SearchResult
-from codefind_server.routes.query import _rerank_results
+from codefind_server.services.query_ranking import rerank_results
 
 
 def _candidate(
@@ -36,7 +36,7 @@ def _candidate(
 
 
 def test_ranking_eval_prefers_definitions_for_implementation_queries():
-    reranked = _rerank_results(
+    reranked = rerank_results(
         query_text="where is the clerk auth function",
         combined=[
             _candidate(
@@ -69,7 +69,7 @@ def test_ranking_eval_prefers_definitions_for_implementation_queries():
 
 
 def test_ranking_eval_prefers_references_for_reference_queries():
-    reranked = _rerank_results(
+    reranked = rerank_results(
         query_text="who calls BuildSignInURL",
         combined=[
             _candidate(
@@ -94,7 +94,7 @@ def test_ranking_eval_prefers_references_for_reference_queries():
 
 
 def test_ranking_eval_prefers_tests_for_test_queries():
-    reranked = _rerank_results(
+    reranked = rerank_results(
         query_text="test for BuildSignInURL",
         combined=[
             _candidate(
@@ -119,7 +119,7 @@ def test_ranking_eval_prefers_tests_for_test_queries():
 
 
 def test_ranking_eval_prefers_config_paths_for_config_queries():
-    reranked = _rerank_results(
+    reranked = rerank_results(
         query_text="where is the clerk env config",
         combined=[
             _candidate(
@@ -143,7 +143,7 @@ def test_ranking_eval_prefers_config_paths_for_config_queries():
 
 
 def test_ranking_eval_prefers_real_auth_definition_over_symbol_body_reference():
-    reranked = _rerank_results(
+    reranked = rerank_results(
         query_text="where is the clerk auth function",
         combined=[
             _candidate(
@@ -192,3 +192,228 @@ def test_ranking_eval_prefers_real_auth_definition_over_symbol_body_reference():
         "ref-assignment",
         "constant",
     ]
+
+
+def test_ranking_eval_prefers_require_auth_users_over_auth_adjacent_noise():
+    reranked = rerank_results(
+        query_text="who uses require_auth",
+        combined=[
+            _candidate(
+                result_id="test-user",
+                score=0.90,
+                path="codefind-server/tests/test_auth.py",
+                language="python",
+                snippet='@app.get("/protected") async def protected(_ctx: OrgContext = Depends(require_auth)): return {"ok": True}',
+                symbol_name="protected",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="route-user",
+                score=0.82,
+                path="codefind-server/src/codefind_server/routes/tokenize.py",
+                language="python",
+                snippet="_context=Depends(require_auth)",
+                symbol_name="tokenize_text",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="middleware-definition",
+                score=0.84,
+                path="codefind-server/src/codefind_server/middleware/auth.py",
+                language="python",
+                snippet="async def require_auth(",
+                symbol_name="require_auth",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids.index("route-user") < ids.index("test-user")
+    assert ids.index("middleware-definition") < ids.index("test-user")
+
+
+def test_ranking_eval_prefers_actual_publishable_key_usage():
+    reranked = rerank_results(
+        query_text="where is clerk publishable key used",
+        combined=[
+            _candidate(
+                result_id="lsp-noise",
+                score=0.90,
+                path="internal/lsp/discovery.go",
+                snippet='func LSPKeyForLanguage(language string) string { return "typescript/javascript" }',
+                symbol_name="LSPKeyForLanguage",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="main-usage",
+                score=0.82,
+                path="web/src/main.tsx",
+                language="typescript",
+                snippet="const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY",
+                symbol_name="clerkPublishableKey",
+                symbol_kind="constant",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="config-source",
+                score=0.80,
+                path="codefind-server/src/codefind_server/config.py",
+                language="python",
+                snippet='clerk_azp=os.getenv("CLERK_AZP", "")',
+                symbol_name="get_settings",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "main-usage"
+    assert ids.index("main-usage") < ids.index("lsp-noise")
+
+
+def test_ranking_eval_prefers_ollama_retry_config_over_unrelated_retry_constants():
+    reranked = rerank_results(
+        query_text="where is ollama retry configured",
+        combined=[
+            _candidate(
+                result_id="client-noise",
+                score=0.91,
+                path="internal/client/api_client.go",
+                snippet="ollamaEmbedRetryBackoffSeconds = 1",
+                symbol_name="ollamaEmbedRetryBackoffSeconds",
+                symbol_kind="constant",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="server-config",
+                score=0.78,
+                path="codefind-server/src/codefind_server/config.py",
+                language="python",
+                snippet='ollama_embed_retry_backoff_seconds=float(os.getenv("OLLAMA_EMBED_RETRY_BACKOFF_SECONDS", "1.0"))',
+                symbol_name="get_settings",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="server-runtime",
+                score=0.80,
+                path="codefind-server/src/codefind_server/services/ollama.py",
+                language="python",
+                snippet="OLLAMA_EMBED_RETRY_BACKOFF_SECONDS = 1.0",
+                symbol_name="OLLAMA_EMBED_RETRY_BACKOFF_SECONDS",
+                symbol_kind="constant",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="lsp-noise",
+                score=0.89,
+                path="internal/chunker/hybrid.go",
+                snippet="const MaxLSPRetries = 3",
+                symbol_name="MaxLSPRetries",
+                symbol_kind="constant",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "server-config"
+    assert ids.index("server-runtime") < ids.index("client-noise")
+    assert ids.index("server-runtime") < ids.index("lsp-noise")
+
+
+def test_ranking_eval_prefers_force_reindex_implementation_over_tests():
+    reranked = rerank_results(
+        query_text="where is force reindex implemented",
+        combined=[
+            _candidate(
+                result_id="test",
+                score=0.90,
+                path="internal/indexer/index_write_test.go",
+                snippet="func TestIndexerIndexForceRebuildTombstonesPreviouslyIndexedFiles(t *testing.T) {",
+                symbol_name="TestIndexerIndexForceRebuildTombstonesPreviouslyIndexedFiles",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="implementation",
+                score=0.82,
+                path="internal/indexer/indexer.go",
+                snippet="func runIndexMode(options RunOptions) string { if options.Window { return IndexModeForceWindow } return IndexModeHybrid }",
+                symbol_name="runIndexMode",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="command",
+                score=0.80,
+                path="cmd/codefind/commands_project.go",
+                snippet='modeLabel := "hybrid (LSP when available)"',
+                symbol_name="newIndexRunCommand",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "implementation"
+    assert ids.index("implementation") < ids.index("test")
+    assert ids.index("command") < ids.index("test")
+
+
+def test_ranking_eval_prefers_auth_entrypoints_over_error_types():
+    reranked = rerank_results(
+        query_text="where is the clerk auth function",
+        combined=[
+            _candidate(
+                result_id="entrypoint",
+                score=0.82,
+                path="cmd/codefind/commands_auth.go",
+                snippet="func runBrowserLogin(ctx context.Context, stdout io.Writer, configPath string) error {",
+                symbol_name="runBrowserLogin",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="command",
+                score=0.84,
+                path="cmd/codefind/commands_auth.go",
+                snippet="func newAuthLoginCommand(configPath *string) *cobra.Command {",
+                symbol_name="newAuthLoginCommand",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="error-class",
+                score=0.88,
+                path="codefind-server/src/codefind_server/middleware/auth.py",
+                language="python",
+                snippet='class TokenVerificationError(ValueError): """Raised when a Clerk token cannot be verified."""',
+                symbol_name="TokenVerificationError",
+                symbol_kind="class",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="constant-helper",
+                score=0.83,
+                path="web/src/lib/auth.ts",
+                language="typescript",
+                snippet="export function getPostAuthPath(orgId: string | null): string { return orgId ? '/search' : '/no-access' }",
+                symbol_name="getPostAuthPath",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "command"
+    assert ids.index("entrypoint") < ids.index("error-class")
+    assert ids.index("error-class") > ids.index("command")
