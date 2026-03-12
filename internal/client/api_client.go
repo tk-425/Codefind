@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,8 +19,13 @@ import (
 )
 
 const (
-	defaultTimeout      = 5 * time.Second
-	indexRequestTimeout = 5 * time.Minute
+	defaultTimeout                 = 5 * time.Second
+	defaultIndexRequestTimeout     = 20 * time.Minute
+	indexTimeoutOverrideEnv        = "CODEFIND_INDEX_REQUEST_TIMEOUT_SECONDS"
+	ollamaEmbedTimeoutSeconds      = 300
+	ollamaEmbedMaxAttempts         = 3
+	ollamaEmbedRetryBackoffSeconds = 1
+	indexTimeoutSafetyMargin       = 2 * time.Minute
 )
 
 type TokenLoader interface {
@@ -104,11 +111,34 @@ func (c *Client) Index(ctx context.Context, request api.IndexRequest) (api.Index
 		request,
 		http.StatusOK,
 		&payload,
-		indexRequestTimeout,
+		indexRequestTimeout(),
 	); err != nil {
 		return api.IndexResponse{}, err
 	}
 	return payload, nil
+}
+
+func indexRequestTimeout() time.Duration {
+	if override := strings.TrimSpace(os.Getenv(indexTimeoutOverrideEnv)); override != "" {
+		seconds, err := strconv.Atoi(override)
+		if err == nil && seconds > 0 {
+			return time.Duration(seconds) * time.Second
+		}
+	}
+
+	retryBackoffTotalSeconds := 0
+	for attempt := 1; attempt < ollamaEmbedMaxAttempts; attempt++ {
+		retryBackoffTotalSeconds += attempt * ollamaEmbedRetryBackoffSeconds
+	}
+
+	derivedTimeout := time.Duration(
+		ollamaEmbedTimeoutSeconds*ollamaEmbedMaxAttempts+retryBackoffTotalSeconds,
+	) * time.Second
+	derivedTimeout += indexTimeoutSafetyMargin
+	if derivedTimeout > defaultIndexRequestTimeout {
+		return derivedTimeout
+	}
+	return defaultIndexRequestTimeout
 }
 
 func (c *Client) UpdateChunkStatus(

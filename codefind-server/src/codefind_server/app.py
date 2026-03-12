@@ -31,6 +31,9 @@ async def lifespan(app: FastAPI):
     ollama = OllamaService(
         base_url=settings.ollama_url,
         embed_model=settings.ollama_embed_model,
+        timeout_seconds=settings.ollama_embed_timeout_seconds,
+        max_attempts=settings.ollama_embed_max_attempts,
+        retry_backoff_seconds=settings.ollama_embed_retry_backoff_seconds,
     )
     tokenizer = TokenizerService(model_name=settings.tokenizer_model)
     index_locks = IndexJobLockManager()
