@@ -39,6 +39,8 @@ class DummyVectorStore:
                     "path": "cmd/codefind/main.go",
                     "snippet": "func main() {}",
                     "content": "func main() {}",
+                    "symbol_name": "main",
+                    "chunking_method": "symbol",
                 },
             )
         ]
@@ -140,12 +142,186 @@ def test_query_searches_only_current_org_collections_and_clamps_top_k():
         "org_123_repo-a",
         "org_123_repo-b",
     }
-    assert all(call["top_k"] == 50 for call in vector_store.query_calls)
+    assert all(call["top_k"] == 100 for call in vector_store.query_calls)
     assert all(
         call["filters"] == {"status": "active", "project": "codefind", "language": "go"}
         for call in vector_store.query_calls
     )
     assert response.json()["total_count"] == 2
+
+
+def test_query_uses_deeper_candidate_pool_than_page_size():
+    app = _make_app()
+    vector_store: DummyVectorStore = app.state.vector_store
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/query",
+            json={"query_text": "main function", "repo_id": "repo-a", "top_k": 10, "page": 1, "page_size": 10},
+        )
+
+    assert response.status_code == 200
+    assert vector_store.query_calls[0]["top_k"] == 50
+
+
+def test_query_prefers_definition_like_chunks_for_implementation_queries():
+    app = _make_app()
+
+    class RankingVectorStore(DummyVectorStore):
+        async def query(self, collection: str, vector: list[float], filters: dict[str, object], top_k: int):
+            return [
+                SearchResult(
+                    id="ref-1",
+                    score=0.94,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "cmd/codefind/cli_runtime.go",
+                        "snippet": "startCallbackServer = authflow.StartCallbackServer",
+                        "content": "startCallbackServer = authflow.StartCallbackServer",
+                    },
+                ),
+                SearchResult(
+                    id="test-1",
+                    score=0.93,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "python",
+                        "path": "codefind-server/tests/test_auth.py",
+                        "snippet": "async def protected(_ctx: OrgContext = Depends(require_auth)): return {'ok': True}",
+                        "content": "async def protected(_ctx: OrgContext = Depends(require_auth)): return {'ok': True}",
+                    },
+                ),
+                SearchResult(
+                    id="def-1",
+                    score=0.89,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "internal/authflow/login.go",
+                        "snippet": "func BuildSignInURL(baseURL string) string {",
+                        "content": "func BuildSignInURL(baseURL string) string {",
+                        "symbol_name": "BuildSignInURL",
+                        "symbol_kind": "function",
+                        "chunking_method": "symbol",
+                    },
+                ),
+            ]
+
+    app.state.vector_store = RankingVectorStore()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/query",
+            json={"query_text": "where is the clerk auth function", "repo_id": "repo-a", "top_k": 10, "page": 1, "page_size": 10},
+        )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data[0]["id"] == "def-1"
+    assert data[1]["id"] == "ref-1"
+    assert data[2]["id"] == "test-1"
+
+
+def test_query_prefers_reference_like_chunks_for_reference_queries():
+    app = _make_app()
+
+    class ReferenceVectorStore(DummyVectorStore):
+        async def query(self, collection: str, vector: list[float], filters: dict[str, object], top_k: int):
+            return [
+                SearchResult(
+                    id="def-1",
+                    score=0.92,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "internal/authflow/login.go",
+                        "snippet": "func BuildSignInURL(baseURL string) string {",
+                        "content": "func BuildSignInURL(baseURL string) string {",
+                        "symbol_name": "BuildSignInURL",
+                        "symbol_kind": "function",
+                        "chunking_method": "symbol",
+                    },
+                ),
+                SearchResult(
+                    id="ref-1",
+                    score=0.90,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "cmd/codefind/cli_runtime.go",
+                        "snippet": "buildSignInURL = authflow.BuildSignInURL",
+                        "content": "buildSignInURL = authflow.BuildSignInURL",
+                    },
+                ),
+            ]
+
+    app.state.vector_store = ReferenceVectorStore()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/query",
+            json={"query_text": "who calls BuildSignInURL", "repo_id": "repo-a", "top_k": 10, "page": 1, "page_size": 10},
+        )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data[0]["id"] == "ref-1"
+    assert data[1]["id"] == "def-1"
+
+
+def test_query_prefers_tests_for_test_queries():
+    app = _make_app()
+
+    class TestIntentVectorStore(DummyVectorStore):
+        async def query(self, collection: str, vector: list[float], filters: dict[str, object], top_k: int):
+            return [
+                SearchResult(
+                    id="def-1",
+                    score=0.93,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "internal/authflow/login.go",
+                        "snippet": "func BuildSignInURL(baseURL string) string {",
+                        "content": "func BuildSignInURL(baseURL string) string {",
+                        "symbol_name": "BuildSignInURL",
+                        "symbol_kind": "function",
+                        "chunking_method": "symbol",
+                    },
+                ),
+                SearchResult(
+                    id="test-1",
+                    score=0.88,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "internal/authflow/login_test.go",
+                        "snippet": "func TestBuildSignInURL(t *testing.T) {",
+                        "content": "func TestBuildSignInURL(t *testing.T) {",
+                    },
+                ),
+            ]
+
+    app.state.vector_store = TestIntentVectorStore()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/query",
+            json={"query_text": "test for BuildSignInURL", "repo_id": "repo-a", "top_k": 10, "page": 1, "page_size": 10},
+        )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data[0]["id"] == "test-1"
+    assert data[1]["id"] == "def-1"
 
 
 def test_query_rejects_invalid_repo_id():
