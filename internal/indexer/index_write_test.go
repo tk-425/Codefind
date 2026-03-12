@@ -103,6 +103,9 @@ func TestIndexerIndexIndexesChangedFilesAndPersistsManifest(t *testing.T) {
 	if persisted.Files["main.go"].ContentHash == "old-hash" {
 		t.Fatalf("persisted manifest file was not updated: %#v", persisted.Files["main.go"])
 	}
+	if persisted.Files["main.go"].LastIndexMode != IndexModeForceWindow {
+		t.Fatalf("persisted LastIndexMode = %q, want %q", persisted.Files["main.go"].LastIndexMode, IndexModeForceWindow)
+	}
 	if _, err := os.Stat(manifestPath); err != nil {
 		t.Fatalf("manifest file missing: %v", err)
 	}
@@ -133,6 +136,7 @@ func TestIndexerIndexRetryLSPReindexesUnchangedDegradedFiles(t *testing.T) {
 				Path:               "main.go",
 				ContentHash:        "same-hash",
 				LastModTime:        info.ModTime().UTC().Format(time.RFC3339),
+				LastIndexMode:      IndexModeHybrid,
 				LastChunkingMethod: "window",
 				FallbackReason:     "timeout",
 				ChunkIDs:           []string{"chunk-old-1"},
@@ -195,6 +199,7 @@ func TestIndexerIndexRetryLSPSkipsBenignWindowFallbacks(t *testing.T) {
 				Path:               "tiny.go",
 				ContentHash:        "same-hash",
 				LastModTime:        info.ModTime().UTC().Format(time.RFC3339),
+				LastIndexMode:      IndexModeHybrid,
 				LastChunkingMethod: "window",
 				FallbackReason:     "no_symbols",
 				ChunkIDs:           []string{"chunk-old-1"},
@@ -226,6 +231,131 @@ func TestIndexerIndexRetryLSPSkipsBenignWindowFallbacks(t *testing.T) {
 	}
 	if len(store.indexRequests) != 0 {
 		t.Fatalf("Index requests = %#v, want none", store.indexRequests)
+	}
+}
+
+func TestIndexerIndexRetryLSPSkipsExplicitForceWindowRuns(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoDir := t.TempDir()
+	sourcePath := filepath.Join(repoDir, "main.go")
+	content := []byte("package main\n\nfunc main() {}\n")
+	if err := os.WriteFile(sourcePath, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+
+	manifest := &Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		RepoID:        "repo-a",
+		OrgID:         "org_123",
+		LastCommit:    "baseline",
+		Files: map[string]ManifestFile{
+			"main.go": {
+				Path:               "main.go",
+				ContentHash:        "same-hash",
+				LastModTime:        info.ModTime().UTC().Format(time.RFC3339),
+				LastIndexMode:      IndexModeForceWindow,
+				LastChunkingMethod: "window",
+				ChunkIDs:           []string{"chunk-old-1"},
+			},
+		},
+	}
+
+	indexer, err := New(repoDir, manifest)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	store := &fakeChunkStore{}
+	response, err := indexer.Index(context.Background(), RunOptions{
+		RepoID:      "repo-a",
+		OrgID:       "org_123",
+		RetryLSP:    true,
+		Concurrency: 1,
+	}, store)
+	if err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	if response.IndexedCount != 0 || response.Detail != "no changed files to index" {
+		t.Fatalf("Index() = %#v, want no retry work for prior force-window indexing", response)
+	}
+	if len(store.updateStatusRequests) != 0 {
+		t.Fatalf("UpdateChunkStatus calls = %#v, want none", store.updateStatusRequests)
+	}
+	if len(store.indexRequests) != 0 {
+		t.Fatalf("Index requests = %#v, want none", store.indexRequests)
+	}
+}
+
+func TestIndexerIndexForceRebuildTombstonesPreviouslyIndexedFiles(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	repoDir := t.TempDir()
+	sourcePath := filepath.Join(repoDir, "main.go")
+	if err := os.WriteFile(sourcePath, []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	manifest := &Manifest{
+		SchemaVersion: ManifestSchemaVersion,
+		RepoID:        "repo-a",
+		OrgID:         "org_123",
+		LastCommit:    "baseline",
+		Files: map[string]ManifestFile{
+			"main.go": {
+				Path:               "main.go",
+				ContentHash:        "old-hash",
+				LastIndexMode:      IndexModeForceWindow,
+				LastChunkingMethod: "window",
+				ChunkIDs:           []string{"chunk-old-1", "chunk-old-2"},
+			},
+		},
+	}
+
+	indexer, err := New(repoDir, manifest)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	store := &fakeChunkStore{}
+	response, err := indexer.Index(context.Background(), RunOptions{
+		RepoID:      "repo-a",
+		OrgID:       "org_123",
+		Force:       true,
+		Concurrency: 1,
+	}, store)
+	if err != nil {
+		t.Fatalf("Index() error = %v", err)
+	}
+
+	if response.IndexedCount == 0 {
+		t.Fatalf("Index() = %#v, want indexed chunks", response)
+	}
+	if len(store.updateStatusRequests) != 1 {
+		t.Fatalf("UpdateChunkStatus calls = %d, want 1", len(store.updateStatusRequests))
+	}
+	got := append([]string(nil), store.updateStatusRequests[0].ChunkIDs...)
+	sort.Strings(got)
+	if strings.Join(got, ",") != "chunk-old-1,chunk-old-2" {
+		t.Fatalf("tombstoned chunk ids = %#v, want prior chunk ids", got)
+	}
+	if len(store.indexRequests) != 1 || len(store.indexRequests[0].Chunks) == 0 {
+		t.Fatalf("Index requests = %#v, want chunk payloads", store.indexRequests)
+	}
+
+	persisted, err := LoadManifest("org_123", "repo-a")
+	if err != nil {
+		t.Fatalf("LoadManifest() error = %v", err)
+	}
+	if persisted.Files["main.go"].LastIndexMode != IndexModeHybrid {
+		t.Fatalf("persisted LastIndexMode = %q, want %q", persisted.Files["main.go"].LastIndexMode, IndexModeHybrid)
 	}
 }
 

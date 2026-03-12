@@ -209,7 +209,7 @@ func newIndexRunCommand(configPath *string) *cobra.Command {
 	command.Flags().StringVar(&repoPath, "repo-path", "", "project path to index (defaults to current directory)")
 	command.Flags().BoolVar(&force, "force", false, "reindex the full repo")
 	command.Flags().BoolVar(&window, "window", false, "use window chunking only")
-	command.Flags().BoolVar(&retryLSP, "retry-lsp", false, "retry LSP chunking for previously degraded unchanged files")
+	command.Flags().BoolVar(&retryLSP, "retry-lsp", false, "retry degraded hybrid LSP fallbacks for unchanged files")
 	command.Flags().IntVar(&concurrency, "concurrency", 1, "parallel file processing inside one indexing job")
 	return command
 }

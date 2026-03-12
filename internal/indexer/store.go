@@ -90,6 +90,15 @@ func LoadManifest(orgID, repoID string) (*Manifest, error) {
 	if manifest.Files == nil {
 		manifest.Files = make(map[string]ManifestFile)
 	}
+	for path, file := range manifest.Files {
+		if file.Path == "" {
+			file.Path = path
+		}
+		if file.LastIndexMode == "" {
+			file.LastIndexMode = defaultIndexMode(file)
+		}
+		manifest.Files[path] = file
+	}
 	if manifest.RepoID == "" {
 		manifest.RepoID = repoID
 	}
@@ -211,6 +220,16 @@ func defaultManifest(orgID, repoID string) *Manifest {
 		OrgID:         orgID,
 		Files:         make(map[string]ManifestFile),
 	}
+}
+
+func defaultIndexMode(file ManifestFile) string {
+	if file.LastChunkingMethod == "" && file.FallbackReason == "" {
+		return ""
+	}
+	if file.FallbackReason == "" && file.LastChunkingMethod == "window" {
+		return IndexModeForceWindow
+	}
+	return IndexModeHybrid
 }
 
 func InitManifest(repoPath, orgID, repoID string, now time.Time) (*Manifest, bool, error) {

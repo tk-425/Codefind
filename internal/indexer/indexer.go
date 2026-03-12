@@ -7,9 +7,9 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"strconv"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -154,7 +154,10 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 		_, _ = i.WarmLSPs()
 	}
 
-	tombstonedIDs := i.collectChunkIDs(append(append(append([]string{}, modified...), deleted...), retryCandidates...))
+	filesToIndex := append(append(append([]string{}, added...), modified...), retryCandidates...)
+	filesToIndex = uniquePaths(filesToIndex)
+	rebuiltExisting := i.rebuiltExistingPaths(filesToIndex)
+	tombstonedIDs := i.collectChunkIDs(append(rebuiltExisting, deleted...))
 	if len(tombstonedIDs) > 0 {
 		reportProgress(options.Progress, fmt.Sprintf("Marking %d stale chunks as tombstoned...", len(tombstonedIDs)))
 		if _, err := store.UpdateChunkStatus(ctx, api.ChunkStatusUpdateRequest{
@@ -166,8 +169,6 @@ func (i *Indexer) Index(ctx context.Context, options RunOptions, store ChunkStor
 		}
 	}
 
-	filesToIndex := append(append(append([]string{}, added...), modified...), retryCandidates...)
-	filesToIndex = uniquePaths(filesToIndex)
 	reportProgress(options.Progress, fmt.Sprintf("Building chunks for %d files...", len(filesToIndex)))
 	indexChunks, manifestFiles, err := i.buildChunks(filesToIndex, options, currentCommit)
 	if err != nil {
@@ -320,6 +321,9 @@ func (i *Indexer) retryLSPCandidates(changedPaths, deletedPaths []string) ([]str
 }
 
 func shouldRetryLSP(file ManifestFile) bool {
+	if file.LastIndexMode != IndexModeHybrid {
+		return false
+	}
 	if file.LastChunkingMethod != "window" {
 		return false
 	}
@@ -329,6 +333,17 @@ func shouldRetryLSP(file ManifestFile) bool {
 	default:
 		return true
 	}
+}
+
+func (i *Indexer) rebuiltExistingPaths(paths []string) []string {
+	rebuilt := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if _, ok := i.manifest.Files[path]; !ok {
+			continue
+		}
+		rebuilt = append(rebuilt, path)
+	}
+	return rebuilt
 }
 
 func (i *Indexer) buildChunks(files []string, options RunOptions, currentCommit string) ([]api.IndexChunk, map[string]ManifestFile, error) {
@@ -455,6 +470,7 @@ func (i *Indexer) buildChunkFile(relPath string, options RunOptions, currentComm
 		LineCount:          countLines(content),
 		LastIndexedCommit:  currentCommit,
 		LastModTime:        fileInfo.ModTime().UTC().Format(time.RFC3339),
+		LastIndexMode:      runIndexMode(options),
 		LastChunkingMethod: result.Method,
 		FallbackReason:     result.FallbackReason,
 		ChunkingVersion:    "1",
@@ -531,4 +547,11 @@ func uniquePaths(paths []string) []string {
 		unique = append(unique, path)
 	}
 	return unique
+}
+
+func runIndexMode(options RunOptions) string {
+	if options.Window {
+		return IndexModeForceWindow
+	}
+	return IndexModeHybrid
 }

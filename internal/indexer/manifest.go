@@ -2,6 +2,11 @@ package indexer
 
 const ManifestSchemaVersion = 1
 
+const (
+	IndexModeHybrid      = "hybrid"
+	IndexModeForceWindow = "force_window"
+)
+
 type Manifest struct {
 	SchemaVersion int                     `json:"schema_version"`
 	RepoID        string                  `json:"repo_id"`
@@ -20,6 +25,7 @@ type ManifestFile struct {
 	LineCount          int      `json:"line_count,omitempty"`
 	LastIndexedCommit  string   `json:"last_indexed_commit,omitempty"`
 	LastModTime        string   `json:"last_mod_time,omitempty"`
+	LastIndexMode      string   `json:"last_index_mode,omitempty"`
 	LastChunkingMethod string   `json:"last_chunking_method,omitempty"`
 	FallbackReason     string   `json:"fallback_reason,omitempty"`
 	ChunkingVersion    string   `json:"chunking_version,omitempty"`
