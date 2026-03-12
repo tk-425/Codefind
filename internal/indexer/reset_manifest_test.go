@@ -144,6 +144,52 @@ func TestLoadInitializedManifestForPathRequiresInit(t *testing.T) {
 	}
 }
 
+func TestLoadManifestDefaultsLastIndexModeForOlderEntries(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	manifestPath, err := ManifestPath("org_test", "repo-a")
+	if err != nil {
+		t.Fatalf("ManifestPath() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	body := `{
+  "schema_version": 1,
+  "repo_id": "repo-a",
+  "org_id": "org_test",
+  "files": {
+    "main.go": {
+      "path": "main.go",
+      "last_chunking_method": "window",
+      "fallback_reason": ""
+    },
+    "retry.go": {
+      "path": "retry.go",
+      "last_chunking_method": "window",
+      "fallback_reason": "timeout"
+    }
+  }
+}
+`
+	if err := os.WriteFile(manifestPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	manifest, err := LoadManifest("org_test", "repo-a")
+	if err != nil {
+		t.Fatalf("LoadManifest() error = %v", err)
+	}
+	if manifest.Files["main.go"].LastIndexMode != IndexModeForceWindow {
+		t.Fatalf("main.go LastIndexMode = %q, want %q", manifest.Files["main.go"].LastIndexMode, IndexModeForceWindow)
+	}
+	if manifest.Files["retry.go"].LastIndexMode != IndexModeHybrid {
+		t.Fatalf("retry.go LastIndexMode = %q, want %q", manifest.Files["retry.go"].LastIndexMode, IndexModeHybrid)
+	}
+}
+
 func testNow() time.Time {
 	return time.Date(2026, time.March, 11, 12, 0, 0, 0, time.UTC)
 }
