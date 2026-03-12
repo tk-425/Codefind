@@ -27,6 +27,9 @@ class Settings:
     ollama_embed_model: str = "nomic-embed-text"
     tokenizer_model: str = "bert-base-uncased"
     ollama_embed_batch_size: int = 4
+    ollama_embed_timeout_seconds: float = 300.0
+    ollama_embed_max_attempts: int = 3
+    ollama_embed_retry_backoff_seconds: float = 1.0
     audit_log_path: str | None = None
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.0
@@ -61,6 +64,15 @@ class Settings:
             tokenizer_model=os.getenv("TOKENIZER_MODEL", "bert-base-uncased"),
             ollama_embed_batch_size=int(
                 os.getenv("OLLAMA_EMBED_BATCH_SIZE", "4")
+            ),
+            ollama_embed_timeout_seconds=float(
+                os.getenv("OLLAMA_EMBED_TIMEOUT_SECONDS", "300")
+            ),
+            ollama_embed_max_attempts=int(
+                os.getenv("OLLAMA_EMBED_MAX_ATTEMPTS", "3")
+            ),
+            ollama_embed_retry_backoff_seconds=float(
+                os.getenv("OLLAMA_EMBED_RETRY_BACKOFF_SECONDS", "1.0")
             ),
             clerk_iss=os.getenv("CLERK_ISS", ""),
             clerk_azp=os.getenv("CLERK_AZP", ""),
@@ -117,6 +129,7 @@ class Settings:
         for name, value in (
             ("MAX_REQUEST_BODY_BYTES", self.max_request_body_bytes),
             ("OLLAMA_EMBED_BATCH_SIZE", self.ollama_embed_batch_size),
+            ("OLLAMA_EMBED_MAX_ATTEMPTS", self.ollama_embed_max_attempts),
             ("RATE_LIMIT_WINDOW_SECONDS", self.rate_limit_window_seconds),
             ("RATE_LIMIT_AUTH_PER_WINDOW", self.rate_limit_auth_per_window),
             ("RATE_LIMIT_ADMIN_PER_WINDOW", self.rate_limit_admin_per_window),
@@ -125,6 +138,10 @@ class Settings:
         ):
             if value <= 0:
                 raise SettingsError(f"{name} must be a positive integer.")
+        if self.ollama_embed_timeout_seconds <= 0:
+            raise SettingsError("OLLAMA_EMBED_TIMEOUT_SECONDS must be a positive number.")
+        if self.ollama_embed_retry_backoff_seconds <= 0:
+            raise SettingsError("OLLAMA_EMBED_RETRY_BACKOFF_SECONDS must be a positive number.")
         return self
 
     @staticmethod

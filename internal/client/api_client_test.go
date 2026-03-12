@@ -307,6 +307,39 @@ func TestClientIndexUsesLongerRequestTimeoutThanDefaultClient(t *testing.T) {
 	}
 }
 
+func TestIndexRequestTimeoutUsesDerivedBudgetByDefault(t *testing.T) {
+	t.Setenv(indexTimeoutOverrideEnv, "")
+
+	got := indexRequestTimeout()
+	want := 20 * time.Minute
+
+	if got != want {
+		t.Fatalf("indexRequestTimeout() = %v, want %v", got, want)
+	}
+}
+
+func TestIndexRequestTimeoutUsesPositiveEnvOverride(t *testing.T) {
+	t.Setenv(indexTimeoutOverrideEnv, "42")
+
+	got := indexRequestTimeout()
+	want := 42 * time.Second
+
+	if got != want {
+		t.Fatalf("indexRequestTimeout() = %v, want %v", got, want)
+	}
+}
+
+func TestIndexRequestTimeoutIgnoresInvalidEnvOverride(t *testing.T) {
+	t.Setenv(indexTimeoutOverrideEnv, "invalid")
+
+	got := indexRequestTimeout()
+	want := 20 * time.Minute
+
+	if got != want {
+		t.Fatalf("indexRequestTimeout() = %v, want %v", got, want)
+	}
+}
+
 func TestClientListTombstonedChunksQueriesRepoID(t *testing.T) {
 	t.Parallel()
 
