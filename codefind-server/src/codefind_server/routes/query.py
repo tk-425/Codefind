@@ -8,6 +8,7 @@ from ..models.requests import QueryRequest
 from ..models.responses import QueryResponse, QueryResultResponse
 from ..services import OllamaService, collection_name_for, repo_id_from_collection, validate_repo_id
 from ..services.ollama import OllamaError
+from ..services.query_retrieval import retrieve_candidates
 from ..services.query_ranking import rerank_results
 from .collections import get_vector_store
 
@@ -15,8 +16,6 @@ from .collections import get_vector_store
 router = APIRouter(prefix="/query", tags=["query"])
 
 ALLOWED_FILTER_KEYS = {"project", "language", "status"}
-MAX_TOP_K = 50
-MAX_RERANK_CANDIDATES = 100
 
 
 def get_ollama_service(request: Request) -> OllamaService:
@@ -30,11 +29,6 @@ def _build_filters(payload: QueryRequest) -> dict[str, object]:
     if payload.language:
         filters["language"] = payload.language
     return {key: value for key, value in filters.items() if key in ALLOWED_FILTER_KEYS}
-
-
-def _candidate_limit(payload: QueryRequest) -> int:
-    requested = max(payload.page_size*5, payload.top_k*3, 30)
-    return min(requested, MAX_RERANK_CANDIDATES)
 
 
 def _result_to_response(org_id: str, collection_name: str, result: SearchResult) -> QueryResultResponse:
@@ -101,17 +95,15 @@ async def query_collections(
             detail=str(error),
         ) from error
     filters = _build_filters(payload)
-    limit = _candidate_limit(payload)
-
-    combined: list[tuple[str, SearchResult]] = []
-    for collection_name in collections:
-        results = await vector_store.query(
-            collection=collection_name,
-            vector=embed_response.embedding,
-            filters=filters,
-            top_k=limit,
-        )
-        combined.extend((collection_name, result) for result in results)
+    combined = await retrieve_candidates(
+        vector_store=vector_store,
+        collections=collections,
+        query_text=payload.query_text,
+        semantic_vector=embed_response.embedding,
+        filters=filters,
+        page_size=payload.page_size,
+        top_k=payload.top_k,
+    )
 
     reranked = rerank_results(query_text=payload.query_text, combined=combined)
     offset = (payload.page - 1) * payload.page_size
