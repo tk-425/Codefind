@@ -14,6 +14,7 @@ from codefind_server.routes.tokenize import router as tokenize_router
 class DummyVectorStore:
     def __init__(self) -> None:
         self.query_calls: list[dict[str, object]] = []
+        self.query_lexical_calls: list[dict[str, object]] = []
         self.count_calls: list[dict[str, object]] = []
 
     async def list_collections(self) -> list[str]:
@@ -44,6 +45,17 @@ class DummyVectorStore:
                 },
             )
         ]
+
+    async def query_lexical(self, collection: str, query_text: str, filters: dict[str, object], top_k: int):
+        self.query_lexical_calls.append(
+            {
+                "collection": collection,
+                "query_text": query_text,
+                "filters": filters,
+                "top_k": top_k,
+            }
+        )
+        return []
 
     async def count(self, collection: str, filters: dict[str, object]) -> int:
         self.count_calls.append({"collection": collection, "filters": filters})
@@ -138,14 +150,20 @@ def test_query_searches_only_current_org_collections_and_clamps_top_k():
 
     assert response.status_code == 200
     assert len(vector_store.query_calls) == 2
+    assert len(vector_store.query_lexical_calls) == 2
     assert {call["collection"] for call in vector_store.query_calls} == {
         "org_123_repo-a",
         "org_123_repo-b",
     }
     assert all(call["top_k"] == 100 for call in vector_store.query_calls)
+    assert all(call["top_k"] == 60 for call in vector_store.query_lexical_calls)
     assert all(
         call["filters"] == {"status": "active", "project": "codefind", "language": "go"}
         for call in vector_store.query_calls
+    )
+    assert all(
+        call["filters"] == {"status": "active", "project": "codefind", "language": "go"}
+        for call in vector_store.query_lexical_calls
     )
     assert response.json()["total_count"] == 2
 
@@ -162,6 +180,119 @@ def test_query_uses_deeper_candidate_pool_than_page_size():
 
     assert response.status_code == 200
     assert vector_store.query_calls[0]["top_k"] == 50
+    assert vector_store.query_lexical_calls[0]["top_k"] == 30
+
+
+def test_query_merges_lexical_and_semantic_candidates_before_reranking():
+    app = _make_app()
+
+    class HybridVectorStore(DummyVectorStore):
+        async def query(self, collection: str, vector: list[float], filters: dict[str, object], top_k: int):
+            return [
+                SearchResult(
+                    id="semantic-noise",
+                    score=0.90,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "internal/lsp/discovery.go",
+                        "snippet": 'func LSPKeyForLanguage(language string) string { return "typescript/javascript" }',
+                        "content": 'func LSPKeyForLanguage(language string) string { return "typescript/javascript" }',
+                        "symbol_name": "LSPKeyForLanguage",
+                        "symbol_kind": "function",
+                        "chunking_method": "symbol",
+                    },
+                )
+            ]
+
+        async def query_lexical(self, collection: str, query_text: str, filters: dict[str, object], top_k: int):
+            return [
+                SearchResult(
+                    id="lexical-hit",
+                    score=0.82,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "typescript",
+                        "path": "web/src/main.tsx",
+                        "snippet": "const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY",
+                        "content": "const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY",
+                        "symbol_name": "clerkPublishableKey",
+                        "symbol_kind": "constant",
+                        "chunking_method": "symbol",
+                    },
+                )
+            ]
+
+    app.state.vector_store = HybridVectorStore()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/query",
+            json={"query_text": "where is clerk publishable key used", "repo_id": "repo-a", "top_k": 10, "page": 1, "page_size": 10},
+        )
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data[0]["id"] == "lexical-hit"
+    assert data[1]["id"] == "semantic-noise"
+
+
+def test_query_dedupes_same_chunk_from_semantic_and_lexical_retrieval():
+    app = _make_app()
+
+    class DedupVectorStore(DummyVectorStore):
+        async def query(self, collection: str, vector: list[float], filters: dict[str, object], top_k: int):
+            return [
+                SearchResult(
+                    id="shared-chunk",
+                    score=0.61,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "internal/authflow/login.go",
+                        "snippet": "func BuildSignInURL(baseURL string) string {",
+                        "content": "func BuildSignInURL(baseURL string) string {",
+                        "symbol_name": "BuildSignInURL",
+                        "symbol_kind": "function",
+                        "chunking_method": "symbol",
+                    },
+                )
+            ]
+
+        async def query_lexical(self, collection: str, query_text: str, filters: dict[str, object], top_k: int):
+            return [
+                SearchResult(
+                    id="shared-chunk",
+                    score=0.88,
+                    payload={
+                        "repo_id": "repo-a",
+                        "project": "codefind",
+                        "language": "go",
+                        "path": "internal/authflow/login.go",
+                        "snippet": "func BuildSignInURL(baseURL string) string {",
+                        "content": "func BuildSignInURL(baseURL string) string {",
+                        "symbol_name": "BuildSignInURL",
+                        "symbol_kind": "function",
+                        "chunking_method": "symbol",
+                    },
+                )
+            ]
+
+    app.state.vector_store = DedupVectorStore()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/query",
+            json={"query_text": "where is BuildSignInURL defined", "repo_id": "repo-a", "top_k": 10, "page": 1, "page_size": 10},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["data"][0]["id"] == "shared-chunk"
 
 
 def test_query_prefers_definition_like_chunks_for_implementation_queries():

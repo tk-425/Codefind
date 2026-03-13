@@ -49,6 +49,16 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def query_lexical(
+        self,
+        collection: str,
+        query_text: str,
+        filters: dict[str, Any],
+        top_k: int,
+    ) -> list[SearchResult]:
+        raise NotImplementedError
+
+    @abstractmethod
     async def update_payload(
         self,
         collection: str,
