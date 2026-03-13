@@ -417,3 +417,183 @@ def test_ranking_eval_prefers_auth_entrypoints_over_error_types():
     assert ids[0] == "command"
     assert ids.index("entrypoint") < ids.index("error-class")
     assert ids.index("error-class") > ids.index("command")
+
+
+def test_ranking_eval_prefers_token_verification_function_over_error_type():
+    reranked = rerank_results(
+        query_text="where is token verification implemented",
+        combined=[
+            _candidate(
+                result_id="error-class",
+                score=0.92,
+                path="codefind-server/src/codefind_server/middleware/auth.py",
+                language="python",
+                snippet='class TokenVerificationError(ValueError): """Raised when a Clerk token cannot be verified."""',
+                symbol_name="TokenVerificationError",
+                symbol_kind="class",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="implementation",
+                score=0.84,
+                path="codefind-server/src/codefind_server/middleware/auth.py",
+                language="python",
+                snippet="def verify_clerk_token(token: str, settings: Settings) -> dict[str, Any]:",
+                symbol_name="verify_clerk_token",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[:2] == ["implementation", "error-class"]
+
+
+def test_ranking_eval_prefers_cleanup_service_over_cli_or_models():
+    reranked = rerank_results(
+        query_text="where is stale chunk cleanup implemented",
+        combined=[
+            _candidate(
+                result_id="cli-command",
+                score=0.88,
+                path="cmd/codefind/commands_project.go",
+                snippet="func newCleanupCommand(configPath *string) *cobra.Command {",
+                symbol_name="newCleanupCommand",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="service-implementation",
+                score=0.80,
+                path="codefind-server/src/codefind_server/services/indexing.py",
+                language="python",
+                snippet="async def purge_chunks(self, *, org_id: str, request: ChunkPurgeRequest) -> ChunkPurgeResponse:",
+                symbol_name="purge_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="response-model",
+                score=0.86,
+                path="codefind-server/src/codefind_server/models/responses.py",
+                language="python",
+                snippet="class ChunkPurgeResponse(BaseModel):",
+                symbol_name="ChunkPurgeResponse",
+                symbol_kind="class",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "service-implementation"
+    assert ids.index("service-implementation") < ids.index("response-model")
+
+
+def test_ranking_eval_prefers_callers_of_load_authenticated_client():
+    reranked = rerank_results(
+        query_text="who uses loadAuthenticatedClient",
+        combined=[
+            _candidate(
+                result_id="definition",
+                score=0.91,
+                path="cmd/codefind/cli_runtime.go",
+                snippet="func loadAuthenticatedClient(ctx context.Context, stdout io.Writer, path string, quiet bool) (*client.Client, error) {",
+                symbol_name="loadAuthenticatedClient",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="caller",
+                score=0.84,
+                path="cmd/codefind/cli_runtime.go",
+                snippet="func requireAdminClient(ctx context.Context, stdout io.Writer, path string) (*client.Client, error) { apiClient, err := loadAuthenticatedClient(ctx, stdout, path, false)",
+                symbol_name="requireAdminClient",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="test",
+                score=0.86,
+                path="cmd/codefind/main_test.go",
+                snippet="func TestLoadAuthenticatedClientRequiresStoredToken(t *testing.T) {",
+                symbol_name="TestLoadAuthenticatedClientRequiresStoredToken",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "caller"
+    assert ids.index("caller") < ids.index("definition")
+    assert ids.index("caller") < ids.index("test")
+
+
+def test_ranking_eval_prefers_startcallbackserver_reference_over_definition():
+    reranked = rerank_results(
+        query_text="where is StartCallbackServer referenced",
+        combined=[
+            _candidate(
+                result_id="definition",
+                score=0.90,
+                path="internal/authflow/login.go",
+                snippet="func StartCallbackServer(ctx context.Context, listener net.Listener, allowedOrigin string) (redirectURI string, waitForToken func() (string, error), err error) {",
+                symbol_name="StartCallbackServer",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="reference",
+                score=0.85,
+                path="cmd/codefind/cli_runtime.go",
+                snippet="startCallbackServer = authflow.StartCallbackServer",
+                symbol_name="startCallbackServer",
+                symbol_kind="variable",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[:2] == ["reference", "definition"]
+
+
+def test_ranking_eval_prefers_browser_login_tests_over_runtime_aliases():
+    reranked = rerank_results(
+        query_text="tests for browser login",
+        combined=[
+            _candidate(
+                result_id="test-helper",
+                score=0.84,
+                path="cmd/codefind/main_test.go",
+                snippet="func useBrowserLoginRunner(runner func(context.Context, io.Writer, string) error) func() {",
+                symbol_name="useBrowserLoginRunner",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="runtime-alias",
+                score=0.92,
+                path="cmd/codefind/cli_runtime.go",
+                snippet="browserLoginRunner = runBrowserLogin",
+                symbol_name="browserLoginRunner",
+                symbol_kind="variable",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="runtime-implementation",
+                score=0.89,
+                path="cmd/codefind/commands_auth.go",
+                snippet="func runBrowserLogin(ctx context.Context, stdout io.Writer, configPath string) error {",
+                symbol_name="runBrowserLogin",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "test-helper"
+    assert ids.index("test-helper") < ids.index("runtime-alias")

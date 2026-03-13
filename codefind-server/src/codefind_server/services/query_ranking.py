@@ -27,6 +27,7 @@ DECLARATION_PATTERNS = (
 NON_IMPLEMENTATION_SYMBOL_KINDS = {"variable", "constant", "property", "field", "key", "string", "number", "boolean"}
 FUNCTION_SYMBOL_KINDS = {"function", "method", "constructor"}
 CLASSLIKE_SYMBOL_KINDS = {"class", "interface", "module", "namespace"}
+ERRORLIKE_SYMBOL_KINDS = {"class", "exception", "error"}
 QUERY_STOPWORDS = {
     "where",
     "is",
@@ -111,18 +112,17 @@ def _is_config_path(path: str) -> bool:
     )
 
 
-def _implementation_path_boost(path: str) -> float:
-    lowered = path.lower()
-    if any(lowered.startswith(prefix) for prefix in ("internal/", "cmd/", "web/src/", "codefind-server/src/")):
-        return 0.025
-    return 0.0
-
-
-def _production_reference_path_boost(path: str) -> float:
-    lowered = path.lower()
-    if any(lowered.startswith(prefix) for prefix in ("codefind-server/src/", "internal/", "cmd/", "web/src/")):
-        return 0.04
-    return 0.0
+def _exact_symbol_match_score(query_tokens: set[str], payload: dict[str, object]) -> float:
+    symbol_name = _payload_text(payload, "symbol_name")
+    if not symbol_name or not query_tokens:
+        return 0.0
+    symbol_tokens = _scoring_tokens(symbol_name)
+    if not symbol_tokens:
+        return 0.0
+    overlap = len(query_tokens & symbol_tokens)
+    if overlap == 0:
+        return 0.0
+    return min(overlap, 3) * 0.05
 
 
 def _is_definition_like(payload: dict[str, object]) -> bool:
@@ -217,6 +217,31 @@ def _symbol_kind_score(payload: dict[str, object], intent: str) -> float:
     return 0.0
 
 
+def _errorlike_implementation_penalty(payload: dict[str, object]) -> float:
+    kind = _symbol_kind(payload)
+    if kind not in ERRORLIKE_SYMBOL_KINDS:
+        return 0.0
+    symbol_name = _payload_text(payload, "symbol_name").lower()
+    snippet = (_payload_text(payload, "snippet") or _payload_text(payload, "content")).lower()
+    if "error" in symbol_name or "exception" in symbol_name or "error" in snippet or "exception" in snippet:
+        return -0.16
+    return 0.0
+
+
+def _strong_function_overlap_boost(query_tokens: set[str], payload: dict[str, object]) -> float:
+    if _symbol_kind(payload) not in FUNCTION_SYMBOL_KINDS:
+        return 0.0
+    if not _is_definition_like(payload):
+        return 0.0
+    symbol_tokens = _scoring_tokens(_payload_text(payload, "symbol_name"))
+    if not symbol_tokens or not query_tokens:
+        return 0.0
+    overlap = len(query_tokens & symbol_tokens)
+    if overlap == 0:
+        return 0.0
+    return min(overlap, 2) * 0.05
+
+
 def _rerank_score(
     *,
     query_text: str,
@@ -230,7 +255,7 @@ def _rerank_score(
     score = base_score
     score += _token_overlap_score(query_tokens, payload)
     score += _identifier_overlap_score(query_tokens, payload)
-    score += _implementation_path_boost(path)
+    score += _exact_symbol_match_score(query_tokens, payload)
     score += _symbol_kind_score(payload, intent)
 
     is_definition = _is_definition_like(payload)
@@ -244,7 +269,7 @@ def _rerank_score(
         if is_definition:
             score += 0.18
         if is_test:
-            score -= 0.36
+            score -= 0.45
         if is_config:
             score -= 0.05
         if is_short_reference:
@@ -255,23 +280,34 @@ def _rerank_score(
                 score += 0.08
             elif kind in CLASSLIKE_SYMBOL_KINDS:
                 score -= 0.08
+        score += _errorlike_implementation_penalty(payload)
+        score += _strong_function_overlap_boost(query_tokens, payload)
+        if _symbol_kind(payload) in CLASSLIKE_SYMBOL_KINDS and "implemented" in query_text.lower():
+            score -= 0.08
     elif intent == REFERENCE_INTENT:
         if is_short_reference:
             score += 0.08
-        score += _production_reference_path_boost(path)
         if is_definition:
-            score -= 0.03
+            score -= 0.12
         if is_test:
-            score -= 0.14
+            score -= 0.18
+        symbol_name = _payload_text(payload, "symbol_name")
+        symbol_tokens = _scoring_tokens(symbol_name)
+        if query_tokens and symbol_tokens and query_tokens == symbol_tokens and is_definition:
+            score -= 0.16
+        if query_tokens and not query_tokens.issubset(symbol_tokens):
+            snippet_tokens = _scoring_tokens(_payload_text(payload, "snippet"))
+            if query_tokens & snippet_tokens:
+                score += 0.14
     elif intent == TEST_INTENT:
         if is_test:
             score += 0.16
         else:
-            score -= 0.12
+            score -= 0.2
         if is_definition:
             score -= 0.04
         if is_short_reference:
-            score -= 0.06
+            score -= 0.12
     elif intent == CONFIG_INTENT:
         if is_config:
             score += 0.18
