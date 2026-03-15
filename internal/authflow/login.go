@@ -68,7 +68,7 @@ func BuildSignInURL(serverURL, redirectURI string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse server URL: %w", err)
 	}
-	base.Path = strings.TrimRight(base.Path, "/") + "/auth/signin"
+	base.Path = strings.TrimRight(base.Path, "/") + "/api/auth/signin"
 	query := base.Query()
 	query.Set("redirect_uri", redirectURI)
 	base.RawQuery = query.Encode()
