@@ -17,7 +17,7 @@ from .routes.query import router as query_router
 from .routes.stats import router as stats_router
 from .routes.tokenize import router as tokenize_router
 from .security import init_sentry, request_body_limit_middleware
-from .services import IndexJobLockManager, OllamaService, TokenizerService
+from .services import IndexJobLockManager, OllamaService, SparseEmbeddingService, TokenizerService
 
 
 @asynccontextmanager
@@ -35,11 +35,21 @@ async def lifespan(app: FastAPI):
         max_attempts=settings.ollama_embed_max_attempts,
         retry_backoff_seconds=settings.ollama_embed_retry_backoff_seconds,
     )
+    sparse_embeddings = (
+        SparseEmbeddingService(
+            model_name=settings.sparse_embed_model,
+            cache_dir=settings.sparse_embed_cache_dir,
+            batch_size=settings.sparse_embed_batch_size,
+        )
+        if settings.sparse_retrieval_enabled
+        else None
+    )
     tokenizer = TokenizerService(model_name=settings.tokenizer_model)
     index_locks = IndexJobLockManager()
     app.state.settings = settings
     app.state.vector_store = vector_store
     app.state.ollama = ollama
+    app.state.sparse_embeddings = sparse_embeddings
     app.state.tokenizer = tokenizer
     app.state.index_locks = index_locks
     yield

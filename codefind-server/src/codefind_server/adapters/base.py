@@ -6,10 +6,27 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class SparseVectorData:
+    indices: list[int]
+    values: list[float]
+
+
+@dataclass(slots=True)
 class VectorPoint:
     id: str
-    vector: list[float]
+    dense_vector: list[float]
+    sparse_vector: SparseVectorData | None = None
     payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class HybridQuery:
+    dense_vector: list[float]
+    sparse_vector: SparseVectorData
+    filters: dict[str, Any]
+    top_k: int
+    dense_top_k: int
+    sparse_top_k: int
 
 
 @dataclass(slots=True)
@@ -39,23 +56,7 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def query(
-        self,
-        collection: str,
-        vector: list[float],
-        filters: dict[str, Any],
-        top_k: int,
-    ) -> list[SearchResult]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def query_lexical(
-        self,
-        collection: str,
-        query_text: str,
-        filters: dict[str, Any],
-        top_k: int,
-    ) -> list[SearchResult]:
+    async def query(self, collection: str, query: HybridQuery) -> list[SearchResult]:
         raise NotImplementedError
 
     @abstractmethod

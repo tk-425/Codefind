@@ -95,10 +95,10 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# vmem
-.vmem/
-
 # Local build artifacts
 /codefind
 
 .codegraph/
+
+# vmem
+.vmem/

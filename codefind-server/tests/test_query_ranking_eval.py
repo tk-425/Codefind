@@ -93,6 +93,43 @@ def test_ranking_eval_prefers_references_for_reference_queries():
     assert [result.id for _, result, _ in reranked][:2] == ["reference", "definition"]
 
 
+def test_ranking_eval_keeps_direct_alias_high_for_defined_queries():
+    reranked = rerank_results(
+        query_text="where is BuildSignInURL defined",
+        combined=[
+            _candidate(
+                result_id="definition",
+                score=0.90,
+                path="internal/authflow/login.go",
+                snippet="func BuildSignInURL(baseURL string) string {",
+                symbol_name="BuildSignInURL",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="alias",
+                score=0.78,
+                path="cmd/codefind/cli_runtime.go",
+                snippet="buildSignInURL = authflow.BuildSignInURL",
+            ),
+            _candidate(
+                result_id="semantic-neighbor",
+                score=0.80,
+                path="codefind-server/src/codefind_server/routes/auth.py",
+                language="python",
+                snippet="def build_signin_redirect(web_app_url: str, redirect_uri: str | None) -> str:",
+                symbol_name="build_signin_redirect",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "definition"
+    assert ids.index("alias") < ids.index("semantic-neighbor")
+
+
 def test_ranking_eval_prefers_tests_for_test_queries():
     reranked = rerank_results(
         query_text="test for BuildSignInURL",
@@ -236,6 +273,36 @@ def test_ranking_eval_prefers_require_auth_users_over_auth_adjacent_noise():
     assert ids.index("middleware-definition") < ids.index("test-user")
 
 
+def test_ranking_eval_demotes_ranking_tests_for_usage_queries():
+    reranked = rerank_results(
+        query_text="who uses require_auth",
+        combined=[
+            _candidate(
+                result_id="ranking-test",
+                score=0.94,
+                path="codefind-server/tests/test_query_ranking_eval.py",
+                language="python",
+                snippet='def test_ranking_eval_prefers_require_auth_users_over_auth_adjacent_noise(): reranked = rerank_results(query_text="who uses require_auth", combined=[...])',
+                symbol_name="test_ranking_eval_prefers_require_auth_users_over_auth_adjacent_noise",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="route-user",
+                score=0.30,
+                path="codefind-server/src/codefind_server/routes/query.py",
+                language="python",
+                snippet='async def query_collections(..., context: OrgContext = Depends(require_auth), ...):',
+                symbol_name="query_collections",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    assert [result.id for _, result, _ in reranked][:2] == ["route-user", "ranking-test"]
+
+
 def test_ranking_eval_prefers_actual_publishable_key_usage():
     reranked = rerank_results(
         query_text="where is clerk publishable key used",
@@ -326,6 +393,66 @@ def test_ranking_eval_prefers_ollama_retry_config_over_unrelated_retry_constants
     assert ids[0] == "server-config"
     assert ids.index("server-runtime") < ids.index("client-noise")
     assert ids.index("server-runtime") < ids.index("lsp-noise")
+
+
+def test_ranking_eval_demotes_config_tests_below_runtime_settings():
+    reranked = rerank_results(
+        query_text="where is ollama retry configured",
+        combined=[
+            _candidate(
+                result_id="config-test",
+                score=0.90,
+                path="codefind-server/tests/test_config.py",
+                language="python",
+                snippet='def test_get_settings_reads_ollama_retry_settings(...): monkeypatch.setenv("OLLAMA_EMBED_RETRY_BACKOFF_SECONDS", "1.0")',
+                symbol_name="test_get_settings_reads_ollama_retry_settings",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="server-config",
+                score=0.24,
+                path="codefind-server/src/codefind_server/config.py",
+                language="python",
+                snippet='ollama_embed_retry_backoff_seconds=float(os.getenv("OLLAMA_EMBED_RETRY_BACKOFF_SECONDS", "1.0"))',
+                symbol_name="get_settings",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    assert [result.id for _, result, _ in reranked][:2] == ["server-config", "config-test"]
+
+
+def test_ranking_eval_demotes_ranking_eval_tests_for_config_queries():
+    reranked = rerank_results(
+        query_text="where is ollama retry configured",
+        combined=[
+            _candidate(
+                result_id="ranking-test",
+                score=0.94,
+                path="codefind-server/tests/test_query_ranking_eval.py",
+                language="python",
+                snippet='def test_ranking_eval_prefers_ollama_retry_config_over_unrelated_retry_constants(): reranked = rerank_results(query_text="where is ollama retry configured", combined=[...]); assert reranked[0][1].id == "server-config"',
+                symbol_name="test_ranking_eval_prefers_ollama_retry_config_over_unrelated_retry_constants",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="runtime-config",
+                score=0.20,
+                path="codefind-server/src/codefind_server/services/ollama.py",
+                language="python",
+                snippet="OLLAMA_EMBED_RETRY_BACKOFF_SECONDS = 1.0",
+                symbol_name="OLLAMA_EMBED_RETRY_BACKOFF_SECONDS",
+                symbol_kind="constant",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    assert [result.id for _, result, _ in reranked][:2] == ["runtime-config", "ranking-test"]
 
 
 def test_ranking_eval_prefers_force_reindex_implementation_over_tests():
@@ -489,6 +616,225 @@ def test_ranking_eval_prefers_cleanup_service_over_cli_or_models():
     ids = [result.id for _, result, _ in reranked]
     assert ids[0] == "service-implementation"
     assert ids.index("service-implementation") < ids.index("response-model")
+
+
+def test_ranking_eval_prefers_implementation_over_route_and_command_wrappers():
+    reranked = rerank_results(
+        query_text="where is stale chunk cleanup implemented",
+        combined=[
+            _candidate(
+                result_id="command-wrapper",
+                score=0.55,
+                path="cmd/codefind/commands_project.go",
+                snippet="func newCleanupCommand(configPath *string) *cobra.Command {",
+                symbol_name="newCleanupCommand",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="route-wrapper",
+                score=0.51,
+                path="codefind-server/src/codefind_server/routes/index.py",
+                language="python",
+                snippet='@router.delete("/chunks/purge") async def purge_chunks(...): return await indexing_service.purge_chunks(org_id=context.org_id, request=request)',
+                symbol_name="purge_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="implementation",
+                score=0.34,
+                path="codefind-server/src/codefind_server/services/indexing.py",
+                language="python",
+                snippet="async def purge_chunks(self, *, org_id: str, request: ChunkPurgeRequest) -> ChunkPurgeResponse:",
+                symbol_name="purge_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    assert [result.id for _, result, _ in reranked][:3] == ["implementation", "route-wrapper", "command-wrapper"]
+
+
+def test_ranking_eval_demotes_cleanup_command_and_eval_tests_below_implementation():
+    reranked = rerank_results(
+        query_text="where is stale chunk cleanup implemented",
+        combined=[
+            _candidate(
+                result_id="command-wrapper",
+                score=0.62,
+                path="cmd/codefind/commands_project.go",
+                snippet="func newCleanupCommand(configPath *string) *cobra.Command {",
+                symbol_name="newCleanupCommand",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="ranking-test",
+                score=0.70,
+                path="codefind-server/tests/test_query_ranking_eval.py",
+                language="python",
+                snippet='def test_ranking_eval_prefers_cleanup_service_over_cli_or_models(): reranked = rerank_results(query_text="where is stale chunk cleanup implemented", combined=[...]); assert ids[0] == "service-implementation"',
+                symbol_name="test_ranking_eval_prefers_cleanup_service_over_cli_or_models",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="implementation",
+                score=0.28,
+                path="codefind-server/src/codefind_server/services/indexing.py",
+                language="python",
+                snippet="async def purge_chunks(self, *, org_id: str, request: ChunkPurgeRequest) -> ChunkPurgeResponse:",
+                symbol_name="purge_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "implementation"
+    assert ids.index("implementation") < ids.index("command-wrapper")
+    assert ids.index("implementation") < ids.index("ranking-test")
+
+
+def test_ranking_eval_prefers_cleanup_service_after_method_chunking():
+    reranked = rerank_results(
+        query_text="where is stale chunk cleanup implemented",
+        combined=[
+            _candidate(
+                result_id="route-wrapper",
+                score=0.267,
+                path="codefind-server/src/codefind_server/routes/index.py",
+                language="python",
+                snippet='@router.delete("/chunks/purge", response_model=ChunkPurgeResponse)\nasync def purge_chunks(request: ChunkPurgeRequest, context: OrgContext = Depends(require_admin), indexing_service: IndexingService = Depends(get_indexing_service)) -> ChunkPurgeResponse:\n    response = await indexing_service.purge_tombstoned_chunks(org_id=context.org_id, request=request)\n    return response',
+                symbol_name="purge_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="command-wrapper",
+                score=0.243,
+                path="cmd/codefind/commands_project.go",
+                snippet="func newCleanupCommand(configPath *string) *cobra.Command {",
+                symbol_name="newCleanupCommand",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="test-wrapper",
+                score=0.500,
+                path="codefind-server/tests/test_index_routes.py",
+                language="python",
+                snippet='async def purge_tombstoned_chunks(self, *, org_id: str, request): self.purge_calls.append({\"org_id\": org_id, \"request\": request}); return {\"status\": \"ok\"}',
+                symbol_name="purge_tombstoned_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="service-implementation",
+                score=0.333,
+                path="codefind-server/src/codefind_server/services/indexing.py",
+                language="python",
+                snippet='async def purge_tombstoned_chunks(self, *, org_id: str, request: ChunkPurgeRequest) -> ChunkPurgeResponse:\n    collection = collection_name_for(org_id, request.repo_id)\n    if collection not in await self._vector_store.list_collections():\n        return ChunkPurgeResponse(status=\"ok\", repo_id=request.repo_id, found_count=0, purged_count=0, files=[])\n    points = await self._vector_store.scroll(collection, {\"status\": \"tombstoned\", \"repo_id\": request.repo_id})\n    cutoff = datetime.now(UTC).timestamp() - (request.older_than_days * 86400)\n    matching_points = []\n    for point in points:\n        tombstoned_at = point.payload.get(\"tombstoned_at\")\n        if not isinstance(tombstoned_at, str):\n            continue\n        matching_points.append(point)',
+                symbol_name="purge_tombstoned_chunks (part 1)",
+                symbol_kind="method",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "service-implementation"
+    assert ids.index("service-implementation") < ids.index("route-wrapper")
+    assert ids.index("service-implementation") < ids.index("command-wrapper")
+    assert ids.index("service-implementation") < ids.index("test-wrapper")
+
+
+def test_ranking_eval_prefers_chunked_method_body_over_route_and_test_wrappers():
+    reranked = rerank_results(
+        query_text="where is stale chunk cleanup implemented",
+        combined=[
+            _candidate(
+                result_id="route-wrapper",
+                score=0.267,
+                path="codefind-server/src/codefind_server/routes/index.py",
+                language="python",
+                snippet='@router.delete("/chunks/purge", response_model=ChunkPurgeResponse)\nasync def purge_chunks(request: ChunkPurgeRequest, context: OrgContext = Depends(require_admin), indexing_service: IndexingService = Depends(get_indexing_service)) -> ChunkPurgeResponse:\n    response = await indexing_service.purge_tombstoned_chunks(org_id=context.org_id, request=request)\n    return response',
+                symbol_name="purge_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="test-wrapper",
+                score=0.500,
+                path="codefind-server/tests/test_index_routes.py",
+                language="python",
+                snippet='async def purge_tombstoned_chunks(self, *, org_id: str, request): self.purge_calls.append({\"org_id\": org_id, \"request\": request}); return {\"status\": \"ok\"}',
+                symbol_name="purge_tombstoned_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="service-body-part",
+                score=0.333,
+                path="codefind-server/src/codefind_server/services/indexing.py",
+                language="python",
+                snippet='collection, {\"status\": \"tombstoned\", \"repo_id\": request.repo_id})\nfiles = self._summarize_tombstoned_points(points)\ncutoff = datetime.now(UTC).timestamp() - (request.older_than_days * 86400)\nmatching_points = []\nfor point in points:\n    tombstoned_at = point.payload.get(\"tombstoned_at\")\n    if not isinstance(tombstoned_at, str):\n        continue\n    matching_points.append(point)',
+                symbol_name="purge_tombstoned_chunks (part 2)",
+                symbol_kind="method",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "service-body-part"
+    assert ids.index("service-body-part") < ids.index("route-wrapper")
+    assert ids.index("service-body-part") < ids.index("test-wrapper")
+
+
+def test_ranking_eval_demotes_ranking_internal_helpers_for_cleanup_queries():
+    reranked = rerank_results(
+        query_text="where is stale chunk cleanup implemented",
+        combined=[
+            _candidate(
+                result_id="implementation",
+                score=0.216,
+                path="codefind-server/src/codefind_server/services/indexing.py",
+                language="python",
+                snippet="async def purge_tombstoned_chunks(self, *, org_id: str, request: ChunkPurgeRequest) -> ChunkPurgeResponse:",
+                symbol_name="purge_tombstoned_chunks",
+                symbol_kind="method",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="ranking-internal",
+                score=0.143,
+                path="codefind-server/src/codefind_server/services/query_ranking.py",
+                language="python",
+                snippet="def _implementation_chunk_body_boost(query_tokens: set[str], payload: dict[str, object]) -> float:",
+                symbol_name="_implementation_chunk_body_boost",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+            _candidate(
+                result_id="route-wrapper",
+                score=0.183,
+                path="codefind-server/src/codefind_server/routes/index.py",
+                language="python",
+                snippet='@router.delete("/chunks/purge", response_model=ChunkPurgeResponse) async def purge_chunks(...): return await indexing_service.purge_tombstoned_chunks(org_id=context.org_id, request=request)',
+                symbol_name="purge_chunks",
+                symbol_kind="function",
+                chunking_method="symbol",
+            ),
+        ],
+    )
+
+    ids = [result.id for _, result, _ in reranked]
+    assert ids[0] == "implementation"
+    assert ids.index("ranking-internal") > ids.index("route-wrapper")
 
 
 def test_ranking_eval_prefers_callers_of_load_authenticated_client():

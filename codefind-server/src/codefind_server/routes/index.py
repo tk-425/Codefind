@@ -15,7 +15,7 @@ from ..models.responses import (
     RepoClearResponse,
     TombstonedChunkListResponse,
 )
-from ..services import IndexJobLockManager, IndexingService, OllamaService
+from ..services import IndexJobLockManager, IndexingService, OllamaService, SparseEmbeddingService
 
 
 router = APIRouter(tags=["index"])
@@ -36,6 +36,16 @@ def get_ollama_service(request: Request) -> OllamaService:
     return request.app.state.ollama
 
 
+def get_sparse_embedding_service(request: Request) -> SparseEmbeddingService:
+    sparse_embeddings = request.app.state.sparse_embeddings
+    if sparse_embeddings is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="sparse retrieval is disabled by server configuration",
+        )
+    return sparse_embeddings
+
+
 def get_index_lock_manager(request: Request) -> IndexJobLockManager:
     return request.app.state.index_locks
 
@@ -44,11 +54,13 @@ def get_indexing_service(
     request: Request,
     vector_store: VectorStore = Depends(get_vector_store),
     ollama: OllamaService = Depends(get_ollama_service),
+    sparse_embeddings: SparseEmbeddingService = Depends(get_sparse_embedding_service),
 ) -> IndexingService:
     embed_batch_size = request.app.state.settings.ollama_embed_batch_size
     return IndexingService(
         vector_store=vector_store,
         ollama=ollama,
+        sparse_embeddings=sparse_embeddings,
         embed_batch_size=embed_batch_size,
     )
 

@@ -186,6 +186,40 @@ def test_get_settings_reads_ollama_retry_settings(monkeypatch: pytest.MonkeyPatc
     assert settings.ollama_embed_retry_backoff_seconds == 2.5
 
 
+def test_get_settings_reads_sparse_retrieval_settings(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("VECTOR_STORE", "qdrant")
+    monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("SPARSE_RETRIEVAL_ENABLED", "false")
+    monkeypatch.setenv("SPARSE_EMBED_MODEL", "custom/splade")
+    monkeypatch.setenv("SPARSE_EMBED_BATCH_SIZE", "8")
+    monkeypatch.setenv("CLERK_ISS", "https://clerk.example.com")
+    monkeypatch.setenv("CLERK_AZP", "http://localhost:3000")
+    monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.com/jwks")
+    monkeypatch.setenv("CLERK_SECRET_KEY", "secret")
+
+    settings = get_settings()
+
+    assert settings.sparse_retrieval_enabled is False
+    assert settings.sparse_embed_model == "custom/splade"
+    assert settings.sparse_embed_batch_size == 8
+
+
+def test_get_settings_reads_sparse_cache_dir(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("VECTOR_STORE", "qdrant")
+    monkeypatch.setenv("QDRANT_URL", "http://localhost:6333")
+    monkeypatch.setenv("OLLAMA_URL", "http://localhost:11434")
+    monkeypatch.setenv("SPARSE_EMBED_CACHE_DIR", "~/.codefind-model-cache/fastembed")
+    monkeypatch.setenv("CLERK_ISS", "https://clerk.example.com")
+    monkeypatch.setenv("CLERK_AZP", "http://localhost:3000")
+    monkeypatch.setenv("CLERK_JWKS_URL", "https://clerk.example.com/jwks")
+    monkeypatch.setenv("CLERK_SECRET_KEY", "secret")
+
+    settings = get_settings()
+
+    assert settings.sparse_embed_cache_dir == "~/.codefind-model-cache/fastembed"
+
+
 def test_settings_reject_invalid_web_app_url():
     settings = Settings(
         environment="test",
