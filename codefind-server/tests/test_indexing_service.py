@@ -12,6 +12,7 @@ from codefind_server.models.requests import (
 )
 from codefind_server.services.indexing import IndexingService
 from codefind_server.services.ollama import EmbeddingResponse, OllamaError
+from codefind_server.services.sparse_embeddings import SparseEmbeddingError, SparseEmbeddingResponse
 
 
 class DummyVectorStore:
@@ -70,6 +71,23 @@ class DummyOllama:
         return list(batch)
 
 
+class DummySparseEmbeddings:
+    def __init__(self, responses: list[SparseEmbeddingResponse] | None = None, *, error: Exception | None = None) -> None:
+        self.responses = responses or []
+        self.error = error
+        self.embed_many_calls: list[list[str]] = []
+        self.response_index = 0
+
+    async def embed_many(self, texts: list[str]) -> list[SparseEmbeddingResponse]:
+        self.embed_many_calls.append(list(texts))
+        if self.error is not None:
+            raise self.error
+        batch_size = len(texts)
+        batch = self.responses[self.response_index : self.response_index + batch_size]
+        self.response_index += batch_size
+        return list(batch)
+
+
 def _make_index_request() -> IndexRequest:
     return IndexRequest(
         repo_id="repo-a",
@@ -113,7 +131,13 @@ def test_index_chunks_batches_embeddings_and_ensures_collection_once(caplog: pyt
             EmbeddingResponse(embedding=[0.4, 0.5, 0.6]),
         ]
     )
-    service = IndexingService(vector_store=vector_store, ollama=ollama)
+    sparse_embeddings = DummySparseEmbeddings(
+        responses=[
+            SparseEmbeddingResponse(indices=[1, 2], values=[0.7, 0.3]),
+            SparseEmbeddingResponse(indices=[3, 4], values=[0.9, 0.2]),
+        ]
+    )
+    service = IndexingService(vector_store=vector_store, ollama=ollama, sparse_embeddings=sparse_embeddings)
 
     response = asyncio.run(service.index_chunks(org_id="org_123", request=_make_index_request()))
 
@@ -121,12 +145,15 @@ def test_index_chunks_batches_embeddings_and_ensures_collection_once(caplog: pyt
     assert response.repo_id == "repo-a"
     assert response.indexed_count == 2
     assert ollama.embed_many_calls == [["package main", "func main() {}"]]
+    assert sparse_embeddings.embed_many_calls == [["package main", "func main() {}"]]
     assert vector_store.ensure_collection_calls == [("org_123_repo-a", 3)]
     assert len(vector_store.upsert_calls) == 1
     collection, points = vector_store.upsert_calls[0]
     assert collection == "org_123_repo-a"
     assert [point.id for point in points] == ["chunk-1", "chunk-2"]
-    assert [point.vector for point in points] == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+    assert [point.dense_vector for point in points] == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+    assert [point.sparse_vector.indices for point in points] == [[1, 2], [3, 4]]
+    assert [point.sparse_vector.values for point in points] == [[0.7, 0.3], [0.9, 0.2]]
     messages = [record.getMessage() for record in caplog.records]
     assert any("[INDEX] plan repo=repo-a" in message for message in messages)
     assert any("[INDEX][EMBED] repo=repo-a batch=1/1 size=2" in message for message in messages)
@@ -160,9 +187,13 @@ def test_index_chunks_splits_large_requests_into_sub_batches():
     ollama = DummyOllama(
         responses=[EmbeddingResponse(embedding=[0.1, 0.2, 0.3]) for _ in range(chunk_count)]
     )
+    sparse_embeddings = DummySparseEmbeddings(
+        responses=[SparseEmbeddingResponse(indices=[1], values=[0.5]) for _ in range(chunk_count)]
+    )
     service = IndexingService(
         vector_store=vector_store,
         ollama=ollama,
+        sparse_embeddings=sparse_embeddings,
         embed_batch_size=embed_batch_size,
     )
 
@@ -173,6 +204,10 @@ def test_index_chunks_splits_large_requests_into_sub_batches():
         [f"content-{index}" for index in range(embed_batch_size)],
         [f"content-{embed_batch_size}"],
     ]
+    assert sparse_embeddings.embed_many_calls == [
+        [f"content-{index}" for index in range(embed_batch_size)],
+        [f"content-{embed_batch_size}"],
+    ]
     assert vector_store.ensure_collection_calls == [("org_123_repo-a", 3)]
     assert len(vector_store.upsert_calls) == 2
 
@@ -180,7 +215,13 @@ def test_index_chunks_splits_large_requests_into_sub_batches():
 def test_index_chunks_raises_when_embedding_count_does_not_match_chunks():
     vector_store = DummyVectorStore([])
     ollama = DummyOllama(responses=[EmbeddingResponse(embedding=[0.1, 0.2, 0.3])])
-    service = IndexingService(vector_store=vector_store, ollama=ollama)
+    sparse_embeddings = DummySparseEmbeddings(
+        responses=[
+            SparseEmbeddingResponse(indices=[1], values=[0.5]),
+            SparseEmbeddingResponse(indices=[2], values=[0.4]),
+        ]
+    )
+    service = IndexingService(vector_store=vector_store, ollama=ollama, sparse_embeddings=sparse_embeddings)
 
     with pytest.raises(OllamaError, match="count did not match request count"):
         asyncio.run(service.index_chunks(org_id="org_123", request=_make_index_request()))
@@ -192,7 +233,8 @@ def test_index_chunks_raises_when_embedding_count_does_not_match_chunks():
 def test_index_chunks_propagates_ollama_errors():
     vector_store = DummyVectorStore([])
     ollama = DummyOllama(error=OllamaError("ollama request failed: timeout"))
-    service = IndexingService(vector_store=vector_store, ollama=ollama)
+    sparse_embeddings = DummySparseEmbeddings()
+    service = IndexingService(vector_store=vector_store, ollama=ollama, sparse_embeddings=sparse_embeddings)
 
     with pytest.raises(OllamaError, match="timeout"):
         asyncio.run(service.index_chunks(org_id="org_123", request=_make_index_request()))
@@ -201,9 +243,27 @@ def test_index_chunks_propagates_ollama_errors():
     assert vector_store.upsert_calls == []
 
 
+def test_index_chunks_raises_when_sparse_embedding_count_does_not_match_chunks():
+    vector_store = DummyVectorStore([])
+    ollama = DummyOllama(
+        responses=[
+            EmbeddingResponse(embedding=[0.1, 0.2, 0.3]),
+            EmbeddingResponse(embedding=[0.4, 0.5, 0.6]),
+        ]
+    )
+    sparse_embeddings = DummySparseEmbeddings(responses=[SparseEmbeddingResponse(indices=[1], values=[0.5])])
+    service = IndexingService(vector_store=vector_store, ollama=ollama, sparse_embeddings=sparse_embeddings)
+
+    with pytest.raises(SparseEmbeddingError, match="count did not match request count"):
+        asyncio.run(service.index_chunks(org_id="org_123", request=_make_index_request()))
+
+    assert vector_store.ensure_collection_calls == []
+    assert vector_store.upsert_calls == []
+
+
 def test_clear_repo_index_only_deletes_target_repo_collection():
     vector_store = DummyVectorStore(["org_123_repo-a", "org_123_repo-b"])
-    service = IndexingService(vector_store=vector_store, ollama=object())
+    service = IndexingService(vector_store=vector_store, ollama=object(), sparse_embeddings=object())
 
     response = asyncio.run(service.clear_repo_index(org_id="org_123", repo_id="repo-a"))
 
@@ -216,7 +276,7 @@ def test_clear_repo_index_only_deletes_target_repo_collection():
 
 def test_clear_repo_index_returns_not_cleared_when_collection_missing():
     vector_store = DummyVectorStore(["org_123_repo-b"])
-    service = IndexingService(vector_store=vector_store, ollama=object())
+    service = IndexingService(vector_store=vector_store, ollama=object(), sparse_embeddings=object())
 
     response = asyncio.run(service.clear_repo_index(org_id="org_123", repo_id="repo-a"))
 

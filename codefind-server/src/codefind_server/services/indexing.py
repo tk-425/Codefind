@@ -16,6 +16,7 @@ from ..models.responses import (
 )
 from .collection_scope import collection_name_for
 from .ollama import OllamaError, OllamaService
+from .sparse_embeddings import SparseEmbeddingError, SparseEmbeddingService
 
 
 logger = logging.getLogger("codefind")
@@ -27,10 +28,12 @@ class IndexingService:
         *,
         vector_store: VectorStore,
         ollama: OllamaService,
+        sparse_embeddings: SparseEmbeddingService,
         embed_batch_size: int = 4,
     ) -> None:
         self._vector_store = vector_store
         self._ollama = ollama
+        self._sparse_embeddings = sparse_embeddings
         self._embed_batch_size = embed_batch_size
 
     async def index_chunks(self, *, org_id: str, request: IndexRequest) -> IndexResponse:
@@ -57,14 +60,17 @@ class IndexingService:
                 len(chunk_batch),
             )
             embeddings = await self._ollama.embed_many([chunk.content for chunk in chunk_batch])
+            sparse_embeddings = await self._sparse_embeddings.embed_many([chunk.content for chunk in chunk_batch])
             if len(embeddings) != len(chunk_batch):
                 raise OllamaError("ollama embed response count did not match request count")
+            if len(sparse_embeddings) != len(chunk_batch):
+                raise SparseEmbeddingError("sparse embed response count did not match request count")
             if embeddings and not ensured_collection:
                 await self._vector_store.ensure_collection(collection, len(embeddings[0].embedding))
                 ensured_collection = True
 
             points: list[VectorPoint] = []
-            for chunk, embedding in zip(chunk_batch, embeddings, strict=True):
+            for chunk, embedding, sparse_embedding in zip(chunk_batch, embeddings, sparse_embeddings, strict=True):
                 payload = {
                     "repo_id": request.repo_id,
                     "path": chunk.metadata.path,
@@ -86,7 +92,8 @@ class IndexingService:
                 points.append(
                     VectorPoint(
                         id=chunk.id,
-                        vector=embedding.embedding,
+                        dense_vector=embedding.embedding,
+                        sparse_vector=sparse_embedding.to_vector_data(),
                         payload={k: v for k, v in payload.items() if v is not None and v != ""},
                     )
                 )

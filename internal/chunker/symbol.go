@@ -143,16 +143,23 @@ func (sc *SymbolChunker) symbolsToChunks(symbols []lsp.DocumentSymbol, parentNam
 			})
 		}
 
-		if len(sym.Children) > 0 && estimatedTokens <= sc.config.TargetTokens*2 {
-			for _, child := range sc.symbolsToChunks(sym.Children, sym.Name) {
-				if isSignificantSymbol(child.SymbolKind) {
-					chunks = append(chunks, child)
-				}
-			}
+		if len(sym.Children) > 0 {
+			chunks = append(chunks, sc.significantChildChunks(sym.Children, sym.Name)...)
 		}
 	}
 
 	return chunks
+}
+
+func (sc *SymbolChunker) significantChildChunks(symbols []lsp.DocumentSymbol, parentName string) []SymbolChunk {
+	childChunks := sc.symbolsToChunks(symbols, parentName)
+	filtered := make([]SymbolChunk, 0, len(childChunks))
+	for _, child := range childChunks {
+		if isSignificantSymbol(child.SymbolKind) {
+			filtered = append(filtered, child)
+		}
+	}
+	return filtered
 }
 
 func (sc *SymbolChunker) splitLargeSymbol(sym lsp.DocumentSymbol, parentName string) []SymbolChunk {

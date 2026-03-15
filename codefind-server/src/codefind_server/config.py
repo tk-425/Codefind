@@ -25,6 +25,10 @@ class Settings:
     clerk_jwks_url: str
     clerk_secret_key: str
     ollama_embed_model: str = "nomic-embed-text"
+    sparse_retrieval_enabled: bool = True
+    sparse_embed_model: str = "prithivida/Splade_PP_en_v1"
+    sparse_embed_cache_dir: str | None = None
+    sparse_embed_batch_size: int = 16
     tokenizer_model: str = "bert-base-uncased"
     ollama_embed_batch_size: int = 4
     ollama_embed_timeout_seconds: float = 300.0
@@ -61,6 +65,12 @@ class Settings:
             qdrant_url=os.getenv("QDRANT_URL", ""),
             ollama_url=os.getenv("OLLAMA_URL", ""),
             ollama_embed_model=os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
+            sparse_retrieval_enabled=os.getenv("SPARSE_RETRIEVAL_ENABLED", "true").lower() in {"1", "true", "yes"},
+            sparse_embed_model=os.getenv("SPARSE_EMBED_MODEL", "prithivida/Splade_PP_en_v1"),
+            sparse_embed_cache_dir=os.getenv("SPARSE_EMBED_CACHE_DIR") or None,
+            sparse_embed_batch_size=int(
+                os.getenv("SPARSE_EMBED_BATCH_SIZE", "16")
+            ),
             tokenizer_model=os.getenv("TOKENIZER_MODEL", "bert-base-uncased"),
             ollama_embed_batch_size=int(
                 os.getenv("OLLAMA_EMBED_BATCH_SIZE", "4")
@@ -129,6 +139,7 @@ class Settings:
         for name, value in (
             ("MAX_REQUEST_BODY_BYTES", self.max_request_body_bytes),
             ("OLLAMA_EMBED_BATCH_SIZE", self.ollama_embed_batch_size),
+            ("SPARSE_EMBED_BATCH_SIZE", self.sparse_embed_batch_size),
             ("OLLAMA_EMBED_MAX_ATTEMPTS", self.ollama_embed_max_attempts),
             ("RATE_LIMIT_WINDOW_SECONDS", self.rate_limit_window_seconds),
             ("RATE_LIMIT_AUTH_PER_WINDOW", self.rate_limit_auth_per_window),
@@ -138,6 +149,8 @@ class Settings:
         ):
             if value <= 0:
                 raise SettingsError(f"{name} must be a positive integer.")
+        if self.sparse_retrieval_enabled and not self.sparse_embed_model:
+            raise SettingsError("SPARSE_EMBED_MODEL must be set when sparse retrieval is enabled.")
         if self.ollama_embed_timeout_seconds <= 0:
             raise SettingsError("OLLAMA_EMBED_TIMEOUT_SECONDS must be a positive number.")
         if self.ollama_embed_retry_backoff_seconds <= 0:

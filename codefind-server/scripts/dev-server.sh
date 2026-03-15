@@ -13,4 +13,8 @@ if [[ -f ".env" ]]; then
   set +a
 fi
 
+if [[ "${SPARSE_RETRIEVAL_ENABLED:-true}" == "true" ]]; then
+  uv run python -m codefind_server.sparse_warmup
+fi
+
 exec uv run --with uvicorn python -m codefind_server.devserver

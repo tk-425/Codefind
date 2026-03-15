@@ -6,7 +6,14 @@ from ..adapters.base import SearchResult, VectorStore
 from ..middleware.auth import OrgContext, require_auth
 from ..models.requests import QueryRequest
 from ..models.responses import QueryResponse, QueryResultResponse
-from ..services import OllamaService, collection_name_for, repo_id_from_collection, validate_repo_id
+from ..services import (
+    OllamaService,
+    SparseEmbeddingError,
+    SparseEmbeddingService,
+    collection_name_for,
+    repo_id_from_collection,
+    validate_repo_id,
+)
 from ..services.ollama import OllamaError
 from ..services.query_retrieval import retrieve_candidates
 from ..services.query_ranking import rerank_results
@@ -20,6 +27,16 @@ ALLOWED_FILTER_KEYS = {"project", "language", "status"}
 
 def get_ollama_service(request: Request) -> OllamaService:
     return request.app.state.ollama
+
+
+def get_sparse_embedding_service(request: Request) -> SparseEmbeddingService:
+    sparse_embeddings = request.app.state.sparse_embeddings
+    if sparse_embeddings is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="sparse retrieval is disabled by server configuration",
+        )
+    return sparse_embeddings
 
 
 def _build_filters(payload: QueryRequest) -> dict[str, object]:
@@ -60,6 +77,7 @@ async def query_collections(
     context: OrgContext = Depends(require_auth),
     vector_store: VectorStore = Depends(get_vector_store),
     ollama: OllamaService = Depends(get_ollama_service),
+    sparse_embeddings: SparseEmbeddingService = Depends(get_sparse_embedding_service),
 ) -> QueryResponse:
     repo_id = payload.repo_id
     if repo_id is not None:
@@ -94,12 +112,19 @@ async def query_collections(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(error),
         ) from error
+    try:
+        sparse_response = await sparse_embeddings.query_embed(payload.query_text)
+    except SparseEmbeddingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(error),
+        ) from error
     filters = _build_filters(payload)
     combined = await retrieve_candidates(
         vector_store=vector_store,
         collections=collections,
-        query_text=payload.query_text,
-        semantic_vector=embed_response.embedding,
+        dense_vector=embed_response.embedding,
+        sparse_vector=sparse_response.to_vector_data(),
         filters=filters,
         page_size=payload.page_size,
         top_k=payload.top_k,
