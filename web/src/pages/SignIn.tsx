@@ -95,7 +95,7 @@ export function SignInPage() {
         </CardHeader>
         <CardContent>
         {isCliFlow ? (
-          <p className="status-chip">CLI callback detected: {redirectUri}</p>
+          <p className="status-chip">CLI callback detected. Token handoff will stay local to this device.</p>
         ) : null}
         </CardContent>
       </Card>
