@@ -19,7 +19,7 @@ func TestBuildSignInURL(t *testing.T) {
 		t.Fatalf("BuildSignInURL() error = %v", err)
 	}
 
-	want := "http://100.64.0.5:8080/auth/signin?redirect_uri=http%3A%2F%2F127.0.0.1%3A49152%2Fcallback"
+	want := "http://100.64.0.5:8080/api/auth/signin?redirect_uri=http%3A%2F%2F127.0.0.1%3A49152%2Fcallback"
 	if got != want {
 		t.Fatalf("BuildSignInURL() = %q, want %q", got, want)
 	}
