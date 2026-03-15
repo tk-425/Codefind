@@ -707,8 +707,10 @@ def _rerank_score(
             score -= 0.42
             if _is_eval_like_test(payload):
                 score -= 0.34
-        score += _config_surface_boost(query_tokens, payload)
-        score += _runtime_config_boost(query_tokens, payload)
+        if not is_test:
+            score += _config_surface_boost(query_tokens, payload)
+        if not is_test:
+            score += _runtime_config_boost(query_tokens, payload)
 
     if duplicate_index > 0:
         score -= min(duplicate_index, 3) * 0.01
