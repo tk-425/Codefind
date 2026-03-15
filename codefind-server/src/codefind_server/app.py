@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from .adapters.qdrant import QdrantAdapter
 from .config import get_settings
@@ -63,13 +63,15 @@ def create_app() -> FastAPI:
     app.middleware("http")(request_context_middleware)
     app.middleware("http")(request_body_limit_middleware(settings.max_request_body_bytes))
     app.add_middleware(RateLimitMiddleware, settings=settings)
-    app.include_router(admin_router)
-    app.include_router(auth_router)
-    app.include_router(collections_router)
-    app.include_router(health_router)
-    app.include_router(index_router)
-    app.include_router(orgs_router)
-    app.include_router(query_router)
-    app.include_router(stats_router)
-    app.include_router(tokenize_router)
+    api_router = APIRouter(prefix="/api")
+    api_router.include_router(admin_router)
+    api_router.include_router(auth_router)
+    api_router.include_router(collections_router)
+    api_router.include_router(health_router)
+    api_router.include_router(index_router)
+    api_router.include_router(orgs_router)
+    api_router.include_router(query_router)
+    api_router.include_router(stats_router)
+    api_router.include_router(tokenize_router)
+    app.include_router(api_router)
     return app

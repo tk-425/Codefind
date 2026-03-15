@@ -60,7 +60,7 @@ func NewWithHTTPClient(baseURL string, tokenStore TokenLoader, httpClient *http.
 
 func (c *Client) Health(ctx context.Context) (api.HealthResponse, error) {
 	var payload api.HealthResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/health", nil, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/health", nil, http.StatusOK, &payload); err != nil {
 		return api.HealthResponse{}, err
 	}
 	return payload, nil
@@ -68,7 +68,7 @@ func (c *Client) Health(ctx context.Context) (api.HealthResponse, error) {
 
 func (c *Client) GetCollections(ctx context.Context) (api.CollectionListResponse, error) {
 	var payload api.CollectionListResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/collections", nil, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/collections", nil, http.StatusOK, &payload); err != nil {
 		return api.CollectionListResponse{}, err
 	}
 	return payload, nil
@@ -76,7 +76,7 @@ func (c *Client) GetCollections(ctx context.Context) (api.CollectionListResponse
 
 func (c *Client) GetStats(ctx context.Context, repoID string) (api.StatsResponse, error) {
 	var payload api.StatsResponse
-	requestPath := "/stats"
+	requestPath := "/api/stats"
 	if strings.TrimSpace(repoID) != "" {
 		requestPath += "?repo_id=" + url.QueryEscape(repoID)
 	}
@@ -88,7 +88,7 @@ func (c *Client) GetStats(ctx context.Context, repoID string) (api.StatsResponse
 
 func (c *Client) Query(ctx context.Context, request api.QueryRequest) (api.QueryResponse, error) {
 	var payload api.QueryResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/query", request, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/api/query", request, http.StatusOK, &payload); err != nil {
 		return api.QueryResponse{}, err
 	}
 	return payload, nil
@@ -96,7 +96,7 @@ func (c *Client) Query(ctx context.Context, request api.QueryRequest) (api.Query
 
 func (c *Client) Tokenize(ctx context.Context, request api.TokenizeRequest) (api.TokenizeResponse, error) {
 	var payload api.TokenizeResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/tokenize", request, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/api/tokenize", request, http.StatusOK, &payload); err != nil {
 		return api.TokenizeResponse{}, err
 	}
 	return payload, nil
@@ -107,7 +107,7 @@ func (c *Client) Index(ctx context.Context, request api.IndexRequest) (api.Index
 	if err := c.doJSONWithTimeout(
 		ctx,
 		http.MethodPost,
-		"/index",
+		"/api/index",
 		request,
 		http.StatusOK,
 		&payload,
@@ -146,7 +146,7 @@ func (c *Client) UpdateChunkStatus(
 	request api.ChunkStatusUpdateRequest,
 ) (api.ChunkStatusUpdateResponse, error) {
 	var payload api.ChunkStatusUpdateResponse
-	if err := c.doJSON(ctx, http.MethodPatch, "/chunks/status", request, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodPatch, "/api/chunks/status", request, http.StatusOK, &payload); err != nil {
 		return api.ChunkStatusUpdateResponse{}, err
 	}
 	return payload, nil
@@ -154,7 +154,7 @@ func (c *Client) UpdateChunkStatus(
 
 func (c *Client) ListTombstonedChunks(ctx context.Context, repoID string) (api.TombstonedChunkListResponse, error) {
 	var payload api.TombstonedChunkListResponse
-	requestPath := "/chunks/tombstoned?repo_id=" + url.QueryEscape(repoID)
+	requestPath := "/api/chunks/tombstoned?repo_id=" + url.QueryEscape(repoID)
 	if err := c.doJSON(ctx, http.MethodGet, requestPath, nil, http.StatusOK, &payload); err != nil {
 		return api.TombstonedChunkListResponse{}, err
 	}
@@ -163,7 +163,7 @@ func (c *Client) ListTombstonedChunks(ctx context.Context, repoID string) (api.T
 
 func (c *Client) PurgeChunks(ctx context.Context, request api.ChunkPurgeRequest) (api.ChunkPurgeResponse, error) {
 	var payload api.ChunkPurgeResponse
-	if err := c.doJSON(ctx, http.MethodDelete, "/chunks/purge", request, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodDelete, "/api/chunks/purge", request, http.StatusOK, &payload); err != nil {
 		return api.ChunkPurgeResponse{}, err
 	}
 	return payload, nil
@@ -171,7 +171,7 @@ func (c *Client) PurgeChunks(ctx context.Context, request api.ChunkPurgeRequest)
 
 func (c *Client) ClearRepo(ctx context.Context, request api.RepoClearRequest) (api.RepoClearResponse, error) {
 	var payload api.RepoClearResponse
-	if err := c.doJSON(ctx, http.MethodDelete, "/index/remove", request, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodDelete, "/api/index/remove", request, http.StatusOK, &payload); err != nil {
 		return api.RepoClearResponse{}, err
 	}
 	return payload, nil
@@ -179,7 +179,7 @@ func (c *Client) ClearRepo(ctx context.Context, request api.RepoClearRequest) (a
 
 func (c *Client) GetOrganizations(ctx context.Context) (api.OrgListResponse, error) {
 	var payload api.OrgListResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/orgs", nil, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/orgs", nil, http.StatusOK, &payload); err != nil {
 		return api.OrgListResponse{}, err
 	}
 	return payload, nil
@@ -187,7 +187,7 @@ func (c *Client) GetOrganizations(ctx context.Context) (api.OrgListResponse, err
 
 func (c *Client) GetAdminMembers(ctx context.Context) (api.OrganizationMemberListResponse, error) {
 	var payload api.OrganizationMemberListResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/admin/members", nil, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/admin/members", nil, http.StatusOK, &payload); err != nil {
 		return api.OrganizationMemberListResponse{}, err
 	}
 	return payload, nil
@@ -195,7 +195,7 @@ func (c *Client) GetAdminMembers(ctx context.Context) (api.OrganizationMemberLis
 
 func (c *Client) GetAdminInvitations(ctx context.Context) (api.OrganizationInvitationListResponse, error) {
 	var payload api.OrganizationInvitationListResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/admin/invitations", nil, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodGet, "/api/admin/invitations", nil, http.StatusOK, &payload); err != nil {
 		return api.OrganizationInvitationListResponse{}, err
 	}
 	return payload, nil
@@ -206,7 +206,7 @@ func (c *Client) CreateAdminInvitation(
 	request api.CreateOrganizationInvitationRequest,
 ) (api.OrganizationInvitation, error) {
 	var payload api.OrganizationInvitation
-	if err := c.doJSON(ctx, http.MethodPost, "/admin/invite", request, http.StatusCreated, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/api/admin/invite", request, http.StatusCreated, &payload); err != nil {
 		return api.OrganizationInvitation{}, err
 	}
 	return payload, nil
@@ -214,7 +214,7 @@ func (c *Client) CreateAdminInvitation(
 
 func (c *Client) RevokeAdminInvitation(ctx context.Context, invitationID string) (api.OrganizationInvitation, error) {
 	var payload api.OrganizationInvitation
-	if err := c.doJSON(ctx, http.MethodPost, "/admin/invitations/"+invitationID+"/revoke", nil, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/api/admin/invitations/"+invitationID+"/revoke", nil, http.StatusOK, &payload); err != nil {
 		return api.OrganizationInvitation{}, err
 	}
 	return payload, nil
@@ -222,7 +222,7 @@ func (c *Client) RevokeAdminInvitation(ctx context.Context, invitationID string)
 
 func (c *Client) RemoveAdminMember(ctx context.Context, userID string) (api.OrganizationMember, error) {
 	var payload api.OrganizationMember
-	if err := c.doJSON(ctx, http.MethodDelete, "/admin/members/"+userID, nil, http.StatusOK, &payload); err != nil {
+	if err := c.doJSON(ctx, http.MethodDelete, "/api/admin/members/"+userID, nil, http.StatusOK, &payload); err != nil {
 		return api.OrganizationMember{}, err
 	}
 	return payload, nil
